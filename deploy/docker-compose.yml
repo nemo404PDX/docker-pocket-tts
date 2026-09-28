@@ -1,6 +1,6 @@
 services:
-  systemx-services-tts:
-    container_name: sysx-srv-tts-local
+  docker-pocket-tts:
+    container_name: pocket-tts-local
     build:
       context: ..
       dockerfile: deploy/Dockerfile
