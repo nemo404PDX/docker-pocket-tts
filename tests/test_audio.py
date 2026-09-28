@@ -14,6 +14,35 @@ def test_tensor_to_pcm_bytes_rejects_3d_input():
         audio_module.tensor_to_pcm_bytes(torch.zeros((1, 1, 8)))
 
 
+# ─────────────────────────────────────────────
+# Format support + conversion
+# ─────────────────────────────────────────────
+def test_supported_formats_always_includes_core():
+    # wav/mp3/flac (soundfile backend) and pcm (native) are always encodable.
+    supported = audio_module.supported_formats()
+    assert {'wav', 'mp3', 'flac', 'pcm'} <= supported
+
+
+def test_validate_format_mpeg_alias():
+    assert audio_module.validate_format('mpeg') == 'mp3'
+    assert audio_module.validate_format('WAV') == 'wav'
+
+
+def test_convert_audio_pcm_is_raw_bytes(tmp_path):
+    # Raw PCM: no RIFF header, exactly samples * channels * 2 bytes (16-bit).
+    tensor = torch.full((1, 100), 0.5)
+    buf = audio_module.convert_audio(tensor, 24000, 'pcm')
+    data = buf.read()
+    assert len(data) == 100 * 2
+    assert not data.startswith(b'RIFF')
+
+
+def test_convert_audio_wav_has_riff_header():
+    tensor = torch.full((1, 100), 0.5)
+    buf = audio_module.convert_audio(tensor, 24000, 'wav')
+    assert buf.read(4) == b'RIFF'
+
+
 def test_compute_rms_dbfs_is_stable_for_known_level():
     tensor = torch.full((1, 16), 0.1, dtype=torch.float32)
     dbfs = audio_module.compute_rms_dbfs(tensor)

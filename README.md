@@ -74,16 +74,18 @@ python server.py --port 49112
 | `GET`  | `/health` | Liveness probe |
 | `GET`  | `/ready` | Readiness — model loaded? |
 | `POST` | `/debug/normalize` | Show preprocessing output. **Disabled unless `POCKET_TTS_DEBUG_LOG=true`.** |
-| `GET`  | `/` | JSON service stub |
+| `GET`  | `/` | JSON service info (includes `supported_formats`) |
 
 ### Speech request body
 
 | Field | Type | Default | Notes |
 | ----- | ---- | ------- | ----- |
-| `input` (or `text`) | string | — | **Required.** Text to synthesize. |
+| `input` (or `text`) | string | — | **Required.** Text to synthesize. Capped at `POCKET_TTS_MAX_INPUT_CHARS` (default 32000) → HTTP 413 if exceeded. |
 | `voice` | string | `POCKET_TTS_DEFAULT_VOICE` | Built-in name, a file in the voices dir, or an absolute path. Unknown IDs fall back to the default when `POCKET_TTS_FALLBACK_UNKNOWN_VOICE=true`. |
-| `stream` | bool | `POCKET_TTS_STREAM_DEFAULT` | Stream audio chunks instead of one response. |
-| `response_format` | string | `mp3` | One of `mp3`, `wav`, `opus`, `aac`, `flac`, `pcm` (`mpeg` → `mp3`; unknown values fall back to `wav`). |
+| `stream` | bool | `POCKET_TTS_STREAM_DEFAULT` | Stream audio chunks instead of one response (PCM/WAV only; other formats return a full file). |
+| `response_format` | string | `mp3` | One of the formats this environment can encode — see `GET /` → `supported_formats`. Always: `wav`, `mp3`, `flac`, `pcm`; plus `aac`/`opus` when an ffmpeg backend is available (the Docker image has one). `mpeg` → `mp3`. Unsupported values return **400** with the supported list. |
+
+Errors use the OpenAI-shaped envelope: `{"error": {"message", "type", "code"}}` (e.g. 413 `input_too_long`, 400 `unsupported_format` / `unknown_voice`, 500 `generation_failed`).
 
 Per-request overrides for the pipeline are also accepted: `normalize`, `segmentation` (`none`/`paragraph`/`sentence`), `skip_code_blocks`, `code_block_phrase`, `emoji_handling` (`strip`/`describe`/`keep`).
 

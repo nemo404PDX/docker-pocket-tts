@@ -21,6 +21,8 @@ from app.logging_config import get_logger
 from app.services.audio import (
     convert_audio,
     get_mime_type,
+    is_supported_format,
+    supported_formats,
     tensor_to_pcm_bytes,
     validate_format,
     write_wav_header,
@@ -176,7 +178,16 @@ def _log_pipeline_debug(data: dict, pipeline_config: TtsPipelineConfig, segments
 @api.route('/')
 def home():
     """Service info endpoint."""
-    return jsonify({'status': 'ok', 'service': 'pocket-tts'}), 200
+    return (
+        jsonify(
+            {
+                'status': 'ok',
+                'service': 'pocket-tts',
+                'supported_formats': sorted(supported_formats()),
+            }
+        ),
+        200,
+    )
 
 
 @api.route('/health', methods=['GET'])
@@ -319,6 +330,18 @@ def generate_speech():
 
     response_format = data.get('response_format', 'mp3')
     target_format = validate_format(response_format)
+
+    # Reject formats this environment can't encode (e.g. aac/opus without an ffmpeg
+    # backend, or unknown strings) with 400 instead of failing mid-generation with 500.
+    if not is_supported_format(target_format):
+        return (
+            _openai_error(
+                f"Unsupported response_format '{response_format}'. "
+                f"Supported formats: {', '.join(sorted(supported_formats()))}.",
+                code='unsupported_format',
+            ),
+            400,
+        )
 
     # Request metadata (no text content — user input is arbitrary)
     logger.info(

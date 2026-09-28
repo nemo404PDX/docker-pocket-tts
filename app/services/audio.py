@@ -15,21 +15,45 @@ from app.logging_config import get_logger
 
 logger = get_logger('audio')
 
-# Valid audio formats
+# Valid audio formats (what we advertise as *requestable*). Actual encodability is
+# checked at runtime via supported_formats() — e.g. aac/opus need an ffmpeg backend.
 VALID_FORMATS = {'mp3', 'wav', 'opus', 'aac', 'flac', 'pcm'}
 TARGET_VOICE_DBFS = -20.0
 VOICE_NORMALIZE_TOLERANCE_DB = 3.0
 
+# Formats torchaudio can encode with the soundfile backend alone (always available).
+_ALWAYS_ENCODABLE = {'wav', 'mp3', 'flac'}
+
+
+def supported_formats() -> set[str]:
+    """Return the audio formats this environment can actually encode.
+
+    wav/mp3/flac always work (soundfile backend); aac/opus additionally require an
+    ffmpeg backend; pcm is produced natively by us (raw 16-bit PCM, no container).
+    Caching keeps this cheap — backends don't change at runtime.
+    """
+    cached = getattr(supported_formats, '_cache', None)
+    if cached is not None:
+        return cached
+
+    formats = set(_ALWAYS_ENCODABLE) | {'pcm'}
+    try:
+        has_ffmpeg = 'ffmpeg' in torchaudio.list_audio_backends()
+    except Exception:  # pragma: no cover - defensive
+        has_ffmpeg = False
+    if has_ffmpeg:
+        formats |= {'aac', 'opus'}
+
+    supported_formats._cache = formats
+    return formats
+
 
 def validate_format(fmt: str) -> str:
     """
-    Normalize and validate the requested audio format.
+    Normalize a requested audio format (lowercase + the mpeg→mp3 alias).
 
-    Args:
-        fmt: Requested format string
-
-    Returns:
-        Validated format string
+    Does NOT check encodability — callers should also test membership in
+    supported_formats() and reject unsupported requests with HTTP 400.
     """
     fmt = fmt.lower()
 
@@ -37,11 +61,12 @@ def validate_format(fmt: str) -> str:
     if fmt == 'mpeg':
         return 'mp3'
 
-    if fmt not in VALID_FORMATS:
-        logger.warning(f"Unknown format '{fmt}', falling back to wav")
-        return 'wav'
-
     return fmt
+
+
+def is_supported_format(fmt: str) -> bool:
+    """True if ``fmt`` (already normalized via validate_format) can be encoded here."""
+    return fmt in supported_formats()
 
 
 def convert_audio(
@@ -69,6 +94,10 @@ def convert_audio(
         audio_tensor = audio_tensor.unsqueeze(0)
     elif audio_tensor.dim() != 2:
         raise ValueError(f'Expected audio tensor with 1 or 2 dims, got shape {tuple(audio_tensor.shape)}')
+
+    # Raw PCM has no container — produce it natively (torchaudio can't encode 'pcm').
+    if target_format == 'pcm':
+        return io.BytesIO(tensor_to_pcm_bytes(audio_tensor))
 
     try:
         torchaudio.save(buffer, audio_tensor, sample_rate, format=target_format)

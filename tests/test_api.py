@@ -113,6 +113,39 @@ def test_missing_input_returns_openai_envelope():
 
 
 # ─────────────────────────────────────────────
+# response_format handling
+# ─────────────────────────────────────────────
+def test_root_advertises_supported_formats():
+    client = make_app().test_client()
+    resp = client.get('/')
+    assert resp.status_code == 200
+    body = resp.get_json()
+    # Core formats are always advertised.
+    assert {'wav', 'mp3', 'flac', 'pcm'} <= set(body['supported_formats'])
+
+
+def test_unsupported_format_returns_400(monkeypatch):
+    # Force a known supported set (independent of whether this env has ffmpeg).
+    monkeypatch.setattr(routes, 'is_supported_format', lambda fmt: fmt in {'wav', 'mp3', 'flac', 'pcm'})
+
+    client = make_app().test_client()
+    resp = client.post('/tts', json={'input': 'hi', 'response_format': 'aac'})
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body['error']['code'] == 'unsupported_format'
+
+
+def test_supported_format_passes_validation(monkeypatch):
+    monkeypatch.setattr(routes, 'is_supported_format', lambda fmt: fmt in {'wav', 'mp3', 'flac', 'pcm'})
+
+    client = make_app().test_client()
+    # mp3 is supported → passes format validation (fails later on model load, 500),
+    # so it must NOT be a 400 unsupported_format.
+    resp = client.post('/tts', json={'input': 'hi', 'response_format': 'mp3'})
+    assert resp.status_code != 400 or resp.get_json()['error'].get('code') != 'unsupported_format'
+
+
+# ─────────────────────────────────────────────
 # Inter-segment silence gap (file path)
 # ─────────────────────────────────────────────
 class _FakeTTS:
