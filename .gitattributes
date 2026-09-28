@@ -1,0 +1,14 @@
+# Normalize all text files to LF in the repo and working tree.
+# Docker entrypoints/shebangs break with CRLF, so keep everything LF
+# even on Windows (overrides core.autocrlf=true).
+* text=auto eol=lf
+
+# Shell scripts must stay LF
+*.sh text eol=lf
+
+# Docker files
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+
+# Binary assets — never touch line endings
+*.wav binary

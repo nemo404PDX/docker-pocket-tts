@@ -1,0 +1,36 @@
+services:
+  systemx-services-tts:
+    container_name: sysx-srv-tts-local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "49112:49112"
+    env_file:
+      - ../.env
+    environment:
+      POCKET_TTS_HOST: 0.0.0.0
+      POCKET_TTS_PORT: 49112
+      POCKET_TTS_MODEL_CACHE_DIR: /data/models/pocket-tts
+      POCKET_TTS_LOCAL_MODEL_DIR: /data/models/kyutai/pocket-tts
+      POCKET_TTS_VOICES_DIR: /data/voices
+      POCKET_TTS_LOG_DIR: /data/logs
+      POCKET_TTS_LOG_TO_FILE: "false"
+      POCKET_TTS_DEBUG_LOG: "true"
+      POCKET_TTS_BRIEFING_MODE: "true"
+      POCKET_TTS_NORMALIZE_DEFAULT: "true"
+      POCKET_TTS_SEGMENTATION_DEFAULT: sentence
+      POCKET_TTS_DEFAULT_VOICE: default.wav
+      HF_TOKEN_FILE: /run/secrets/hf_token
+    volumes:
+      - ../data/models:/data/models
+      - ../data/voices:/data/voices
+      - ../data/logs:/data/logs
+      - C:\Users\nemo\.secrets\hf_token:/run/secrets/hf_token:ro
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:49112/health', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
