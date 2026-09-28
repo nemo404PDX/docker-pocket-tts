@@ -72,9 +72,13 @@ def _build_pipeline_config(data: dict, app_config) -> TtsPipelineConfig:
     normalize_default = app_config.get('TTS_NORMALIZE_DEFAULT', False)
     segmentation_default = app_config.get('TTS_SEGMENTATION_DEFAULT', 'none')
     skip_code_blocks_default = app_config.get('TTS_SKIP_CODE_BLOCKS', True)
+    # Single source of truth for the code-block placeholder is Config (which reads
+    # normalize.DEFAULT_CODE_BLOCK_PHRASE); fall back to it if not in app config.
+    from app.config import Config
+
     code_block_phrase_default = app_config.get(
         'TTS_CODE_BLOCK_PHRASE',
-        ', see the code in the conversation history,',
+        Config.TTS_CODE_BLOCK_PHRASE,
     )
     emoji_default = app_config.get('TTS_EMOJI_HANDLING', 'strip')
     drop_source_links_default = app_config.get('TTS_DROP_SOURCE_LINKS', briefing_mode)

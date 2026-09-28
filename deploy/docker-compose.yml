@@ -5,28 +5,32 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     ports:
+      # Host port must match POCKET_TTS_PORT in ../.env (default 49112).
       - "49112:49112"
     env_file:
       - ../.env
     environment:
-      POCKET_TTS_HOST: 0.0.0.0
-      POCKET_TTS_PORT: 49112
+      # Container-internal paths only — user-facing settings live in ../.env.
       POCKET_TTS_MODEL_CACHE_DIR: /data/models/pocket-tts
       POCKET_TTS_LOCAL_MODEL_DIR: /data/models/kyutai/pocket-tts
       POCKET_TTS_VOICES_DIR: /data/voices
-      POCKET_TTS_LOG_DIR: /data/logs
+      # stdout-only logging: Docker's log driver (below) captures and rotates it.
+      # Set POCKET_TTS_LOG_TO_FILE=true in ../.env to also write file logs, but
+      # note there is no /data/logs volume by default — they'd live in the image fs.
       POCKET_TTS_LOG_TO_FILE: "false"
-      POCKET_TTS_DEBUG_LOG: "true"
-      POCKET_TTS_BRIEFING_MODE: "true"
-      POCKET_TTS_NORMALIZE_DEFAULT: "true"
-      POCKET_TTS_SEGMENTATION_DEFAULT: sentence
-      POCKET_TTS_DEFAULT_VOICE: default.wav
+      # Where the app looks for the HF token inside the container (see tts.py).
       HF_TOKEN_FILE: /run/secrets/hf_token
     volumes:
       - ../data/models:/data/models
       - ../data/voices:/data/voices
-      - ../data/logs:/data/logs
-      - C:\Users\nemo\.secrets\hf_token:/run/secrets/hf_token:ro
+      # Host path to the HF token file; override with HF_TOKEN_FILE=<path> in your
+      # shell env (or a deploy/.env) if it lives elsewhere.
+      - ${HF_TOKEN_FILE:-C:\Users\nemo\.secrets\hf_token}:/run/secrets/hf_token:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test:
         ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:49112/health', timeout=5)"]

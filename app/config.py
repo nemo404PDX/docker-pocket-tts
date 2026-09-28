@@ -7,6 +7,11 @@ import os
 import sys
 from pathlib import Path
 
+# Canonical default for the code-block placeholder lives in normalize.py (where
+# TtsPipelineConfig consumes it). Importing here keeps a single source of truth
+# instead of duplicating the literal across config + routes.
+from app.services.normalize import DEFAULT_CODE_BLOCK_PHRASE
+
 
 def get_base_path() -> Path:
     """Get the base path for the application (repo root)."""
@@ -86,7 +91,7 @@ class Config:
     TTS_SKIP_CODE_BLOCKS = os.environ.get('POCKET_TTS_SKIP_CODE_BLOCKS', 'true').lower() == 'true'
     TTS_CODE_BLOCK_PHRASE = os.environ.get(
         'POCKET_TTS_CODE_BLOCK_PHRASE',
-        ', see the code in the conversation history,',
+        DEFAULT_CODE_BLOCK_PHRASE,
     )
     TTS_EMOJI_HANDLING = os.environ.get('POCKET_TTS_EMOJI_HANDLING', 'strip')
     TTS_BRIEFING_MODE = os.environ.get('POCKET_TTS_BRIEFING_MODE', 'false').lower() == 'true'

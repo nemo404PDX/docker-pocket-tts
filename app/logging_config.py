@@ -13,21 +13,31 @@ def setup_logging(log_level: str = None) -> logging.Logger:
     Configure application logging with console and rotating file handlers.
 
     Args:
-        log_level: Override log level (default: from Config.LOG_LEVEL)
+        log_level: Override log level (default: from Config.LOG_LEVEL). If the
+            logger is already configured, an explicit value here re-applies to
+            the existing handlers instead of being ignored — so a later caller
+            can still change the level (e.g. CLI flag after env-based setup).
 
     Returns:
         Configured logger instance
     """
-    level = getattr(logging, (log_level or Config.LOG_LEVEL).upper(), logging.INFO)
-
     # Create logger
     logger = logging.getLogger('PocketTTS')
-    logger.setLevel(level)
     logger.propagate = False
 
-    # Avoid duplicate handlers
     if logger.handlers:
+        # Already configured. Only re-apply when an explicit level was given,
+        # so the first caller stays authoritative for default (env) setups but
+        # a later explicit override still takes effect.
+        if log_level is not None:
+            level = getattr(logging, str(log_level).upper(), logging.INFO)
+            logger.setLevel(level)
+            for handler in logger.handlers:
+                handler.setLevel(level)
         return logger
+
+    level = getattr(logging, (log_level or Config.LOG_LEVEL).upper(), logging.INFO)
+    logger.setLevel(level)
 
     # Console handler - simple format
     console_handler = logging.StreamHandler(sys.stdout)
