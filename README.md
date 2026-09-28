@@ -70,7 +70,7 @@ python server.py --port 49112
 | Method | Path | Description |
 | ------ | ---- | ----------- |
 | `POST` | `/v1/audio/speech`, `/tts`, `/audio` | Generate speech (OpenAI-compatible) |
-| `GET`  | `/v1/voices` | List available voices (built-in + custom) |
+| `GET`  | `/v1/voices` | List available voices (built-in + custom). Each entry includes a stable `created_at` (epoch seconds; built-ins are `0`, custom voices carry their file mtime) for OpenAI compatibility. |
 | `GET`  | `/health` | Liveness probe |
 | `GET`  | `/ready` | Readiness — model loaded? |
 | `POST` | `/debug/normalize` | Show preprocessing output. **Disabled unless `POCKET_TTS_DEBUG_LOG=true`.** |
@@ -87,7 +87,7 @@ python server.py --port 49112
 
 Errors use the OpenAI-shaped envelope: `{"error": {"message", "type", "code"}}` (e.g. 413 `input_too_long`, 400 `unsupported_format` / `unknown_voice`, 500 `generation_failed`).
 
-Per-request overrides for the pipeline are also accepted: `normalize`, `segmentation` (`none`/`paragraph`/`sentence`), `skip_code_blocks`, `code_block_phrase`, `emoji_handling` (`strip`/`describe`/`keep`).
+Per-request overrides for the pipeline are also accepted: `normalize`, `segmentation` (`none`/`paragraph`/`sentence`), `skip_code_blocks`, `code_block_phrase`, `emoji_handling` (`strip`/`describe`/`keep`), and `marker_pattern` (regex of client markers to strip; empty value disables stripping).
 
 ---
 
@@ -137,6 +137,7 @@ All optional — defaults preserve existing behavior, so nothing changes unless 
 | `POCKET_TTS_SKIP_CODE_BLOCKS` | `true` | Replace fenced code blocks with a placeholder before synthesis. |
 | `POCKET_TTS_CODE_BLOCK_PHRASE` | `, see the code in the conversation history,` | Placeholder text for skipped code blocks. |
 | `POCKET_TTS_EMOJI_HANDLING` | `strip` | `strip`, `describe`, or `keep`. |
+| `POCKET_TTS_HERMES_MARKER_PATTERN` | Hermes markers (`[terminal]`, `[OUT-OF-BAND USER MESSAGE]`) | Regex of client markers to strip (whole line removed). Override if you feed a different client's output; set empty to disable. Also overridable per-request via `marker_pattern`. |
 
 ### Logging
 | Variable | Default | Description |

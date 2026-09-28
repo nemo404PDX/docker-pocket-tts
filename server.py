@@ -80,6 +80,7 @@ Environment Variables (full reference in README.md):
     POCKET_TTS_SKIP_CODE_BLOCKS Replace fenced code blocks before synthesis
     POCKET_TTS_CODE_BLOCK_PHRASE Placeholder text for code blocks
     POCKET_TTS_EMOJI_HANDLING Emoji handling mode
+    POCKET_TTS_HERMES_MARKER_PATTERN Regex of client markers to strip (empty disables)
     POCKET_TTS_BRIEFING_MODE Enable briefing-oriented preprocessing defaults
     POCKET_TTS_DROP_SOURCE_LINKS Drop trailing --- SOURCE LINKS --- section
     POCKET_TTS_SKIP_VOICE_NORMALIZE Skip startup voice WAV loudness normalization

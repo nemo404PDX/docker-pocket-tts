@@ -358,10 +358,18 @@ class TTSService:
         """
         voices = []
 
-        # Built-in voices (sorted alphabetically)
+        # Built-in voices (sorted alphabetically). created_at is a stable epoch-0 — they're
+        # part of the model, not user files, so there's no meaningful creation timestamp.
         builtin_sorted = sorted(Config.BUILTIN_VOICES)
         for voice in builtin_sorted:
-            voices.append({'id': voice, 'name': voice.capitalize(), 'type': 'builtin'})
+            voices.append(
+                {
+                    'id': voice,
+                    'name': voice.capitalize(),
+                    'type': 'builtin',
+                    'created_at': 0,
+                }
+            )
 
         # Custom voices from directory
         custom_voices = []
@@ -380,11 +388,19 @@ class TTSService:
                 # Format name: "bobby_mcfern" -> "Bobby Mcfern"
                 clean_name = voice_file.stem.replace('_', ' ').replace('-', ' ').title()
 
+                # File mtime (epoch seconds) — stable per file, reflects when the voice was
+                # added/updated. Falls back to 0 if stat fails.
+                try:
+                    created_at = int(voice_file.stat().st_mtime)
+                except OSError:
+                    created_at = 0
+
                 custom_voices.append(
                     {
                         'id': voice_file.name,
                         'name': clean_name,
                         'type': 'custom',
+                        'created_at': created_at,
                     }
                 )
 

@@ -40,6 +40,7 @@ def create_app(config_overrides: dict = None) -> 'Flask':
     app.config['TTS_SEGMENTATION_DEFAULT'] = Config.TTS_SEGMENTATION_DEFAULT
     app.config['TTS_SKIP_CODE_BLOCKS'] = Config.TTS_SKIP_CODE_BLOCKS
     app.config['TTS_CODE_BLOCK_PHRASE'] = Config.TTS_CODE_BLOCK_PHRASE
+    app.config['TTS_HERMES_MARKER_PATTERN'] = Config.TTS_HERMES_MARKER_PATTERN
     app.config['TTS_EMOJI_HANDLING'] = Config.TTS_EMOJI_HANDLING
     # Briefing mode + source-links stripping must reach app.config too, otherwise
     # routes._build_pipeline_config() can't see them on the WSGI/container path

@@ -151,3 +151,46 @@ def test_source_links_tail_kept_when_disabled():
     text = 'Story content.\n\n--- SOURCE LINKS ---\n- https://example.com'
     normalized = normalize_tts_text(text, config)
     assert 'SOURCE LINKS' in normalized
+
+
+# ─────────────────────────────────────────────
+# Client-marker stripping (configurable pattern)
+# ─────────────────────────────────────────────
+def test_default_pattern_strips_hermes_markers():
+    text = 'Before.\n[terminal] some tool output\nAfter.'
+    # The marker line is removed; the surrounding single newline is preserved.
+    assert normalize_tts_text(text, TtsPipelineConfig(normalize=False)) == 'Before.\nAfter.'
+
+
+def test_custom_marker_pattern_is_used():
+    # A different client's marker token — the whole line containing it is removed.
+    config = TtsPipelineConfig(normalize=False, marker_pattern=r'\[TOOL\]')
+    text = 'Keep this.\n[TOOL] output here\nKeep that too.'
+    assert normalize_tts_text(text, config) == 'Keep this.\nKeep that too.'
+
+
+def test_custom_marker_pattern_with_bracket_terminator():
+    # Bracket-terminated markers (like the Hermes default) stop at the closing bracket.
+    config = TtsPipelineConfig(normalize=False, marker_pattern=r'\[OUT\][^\]]*\]')
+    text = 'One.\n[OUT] payload [nested] tail\nTwo.'
+    assert normalize_tts_text(text, config) == 'One.\nTwo.'
+
+
+def test_empty_marker_pattern_disables_stripping():
+    # Explicit empty string disables marker stripping (default pattern would remove the line).
+    config = TtsPipelineConfig(normalize=False, marker_pattern='')
+    text = 'Before.\n[terminal] tool output\nAfter.'
+    assert '[terminal]' in normalize_tts_text(text, config)
+
+
+def test_invalid_marker_pattern_is_ignored():
+    # Invalid regex → warning + no stripping (must not raise).
+    config = TtsPipelineConfig(normalize=False, marker_pattern='(unclosed')
+    text = 'Before.\n[terminal] tool output\nAfter.'
+    assert '[terminal]' in normalize_tts_text(text, config)
+
+
+def test_none_marker_pattern_uses_default():
+    # None (unset) behaves exactly like the default pattern.
+    text = 'Before.\n[OUT-OF-BAND USER MESSAGE] x\nAfter.'
+    assert normalize_tts_text(text, TtsPipelineConfig(normalize=False)) == 'Before.\nAfter.'

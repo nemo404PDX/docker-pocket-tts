@@ -10,7 +10,7 @@ from pathlib import Path
 # Canonical default for the code-block placeholder lives in normalize.py (where
 # TtsPipelineConfig consumes it). Importing here keeps a single source of truth
 # instead of duplicating the literal across config + routes.
-from app.services.normalize import DEFAULT_CODE_BLOCK_PHRASE
+from app.services.normalize import DEFAULT_CODE_BLOCK_PHRASE, DEFAULT_HERMES_MARKER_PATTERN
 
 
 def get_base_path() -> Path:
@@ -133,6 +133,12 @@ class Config:
     TTS_CODE_BLOCK_PHRASE = os.environ.get(
         'POCKET_TTS_CODE_BLOCK_PHRASE',
         DEFAULT_CODE_BLOCK_PHRASE,
+    )
+    # Regex of client markers to strip from TTS text (whole line removed). Defaults to the
+    # Hermes-specific pattern; override per-deployment if you feed a different client's output.
+    TTS_HERMES_MARKER_PATTERN = os.environ.get(
+        'POCKET_TTS_HERMES_MARKER_PATTERN',
+        DEFAULT_HERMES_MARKER_PATTERN,
     )
     TTS_EMOJI_HANDLING = os.environ.get('POCKET_TTS_EMOJI_HANDLING', 'strip')
     TTS_BRIEFING_MODE = os.environ.get('POCKET_TTS_BRIEFING_MODE', 'false').lower() == 'true'

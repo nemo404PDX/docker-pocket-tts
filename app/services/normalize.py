@@ -4,11 +4,17 @@ TTS-specific normalization and segmentation helpers.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Literal
 
 from app.services.preprocess import TextPreprocessor
+
+# Child of the 'PocketTTS' base logger (configured by setup_logging). Uses stdlib
+# logging directly — importing app.logging_config here would cycle (logging_config →
+# config → normalize).
+logger = logging.getLogger('PocketTTS.normalize')
 
 StageName = Literal[
     'sanitize',
@@ -45,11 +51,9 @@ _TABLE_MULTILINE_RE = re.compile(r'^(?:\|.*\|\s*\n?)+', re.MULTILINE)
 # Single-line tables: all rows concatenated without newlines
 # Pattern: | col | col | |---|---| | data | data | (multiple pipe-delimited segments in one line)
 _TABLE_SINGLELINE_RE = re.compile(r'\|[^\n]*\|\s*\|[^\n]*\|\s*(?:\|[^\n]*\|\s*)+')
-# Hermes-specific markers that leak into TTS text (opening/closing tags + tool output)
-_HERMES_MARKER_RE = re.compile(
-    r'/?\[[/\s]*(?:terminal|OUT-OF-BAND USER MESSAGE)[^\]]*\]',
-    re.IGNORECASE,
-)
+# Default marker pattern stripped from TTS text (opening/closing tags + tool output).
+# Overridable at runtime via POCKET_TTS_HERMES_MARKER_PATTERN — see _strip_hermes_marker_lines.
+DEFAULT_HERMES_MARKER_PATTERN = r'/?\[[/\s]*(?:terminal|OUT-OF-BAND USER MESSAGE)[^\]]*\]'
 _FILENAME_RE = re.compile(
     r'(?<!\.)\b[a-z0-9_-]+\.[a-z0-9_-]{2,}(?:\.[a-z0-9._-]+)*\b', re.IGNORECASE
 )
@@ -201,6 +205,8 @@ class TtsPipelineConfig:
     max_segment_chars: int = MAX_SEGMENT_CHARS
     run_number_expansion: bool = True
     drop_source_links_section: bool = False
+    # Regex of client markers to strip (whole line removed). None → default pattern.
+    marker_pattern: str | None = None
 
 
 @dataclass(slots=True)
@@ -273,8 +279,8 @@ def _normalize_internal(
     # Strip tables early — before Hermes markers, since single-line tables may contain
     # marker text inside cells that would otherwise eat the entire line
     result = _strip_tables_for_tts(result)
-    # Strip Hermes marker lines after tables so [terminal] inside table cells is already gone
-    result = _strip_hermes_marker_lines(result)
+    # Strip client marker lines after tables so [terminal] inside table cells is already gone
+    result = _strip_hermes_marker_lines(result, config.marker_pattern)
     steps.append(('sanitize', result))
 
     if not config.normalize:
@@ -315,14 +321,35 @@ def _sanitize_text(text: str) -> str:
     return cleaned
 
 
-def _strip_hermes_marker_lines(text: str) -> str:
-    """Remove entire lines that contain Hermes markers like [terminal] or [OUT-OF-BAND]."""
-    # Match a full line (start to newline) containing any Hermes marker tag.
-    # The trailing .* is greedy so it captures everything after the marker on the same line.
-    return re.sub(
-        r'^.*?(?:/?\[(?:terminal|OUT-OF-BAND USER MESSAGE)[^\]]*\]).*\n?',
-        '', text, flags=re.MULTILINE | re.IGNORECASE,
-    )
+def _strip_hermes_marker_lines(text: str, marker_pattern: str | None = None) -> str:
+    """Remove entire lines that contain client markers like [terminal] or [OUT-OF-BAND].
+
+    ``marker_pattern`` semantics:
+      - ``None``            → use DEFAULT_HERMES_MARKER_PATTERN (the Hermes default).
+      - explicitly empty '' → disable marker stripping entirely.
+      - a valid regex       → used as-is (case-insensitive); the whole line is removed.
+      - an invalid regex    → log a warning and leave the text unchanged.
+
+    This keeps the server decoupled from any one client's output format — override via
+    POCKET_TTS_HERMES_MARKER_PATTERN if you feed a different client's transcript.
+    """
+    if marker_pattern is None:
+        pattern = DEFAULT_HERMES_MARKER_PATTERN
+    else:
+        pattern = marker_pattern.strip()
+        if not pattern:  # explicitly empty → disabled
+            return text
+
+    try:
+        re.compile(pattern, re.IGNORECASE)  # validate; the raw string is embedded below
+    except re.error as exc:
+        logger.warning('Invalid POCKET_TTS_HERMES_MARKER_PATTERN %r (%s); skipping marker stripping', pattern, exc)
+        return text
+
+    # Match a full line (start to newline) containing the marker. The trailing .* is greedy
+    # so it captures everything after the marker on the same line. Embed the raw pattern —
+    # interpolating a compiled object would stringify to "re.compile(...)", not the regex.
+    return re.sub(rf'^.*?(?:{pattern}).*\n?', '', text, flags=re.MULTILINE | re.IGNORECASE)
 
 
 def _strip_tables_for_tts(text: str) -> str:

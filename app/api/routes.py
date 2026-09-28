@@ -128,6 +128,12 @@ def _build_pipeline_config(data: dict, app_config) -> TtsPipelineConfig:
         'TTS_CODE_BLOCK_PHRASE',
         Config.TTS_CODE_BLOCK_PHRASE,
     )
+    # Client-marker regex (server-level; not exposed per-request). Single source of truth is
+    # Config (which reads normalize.DEFAULT_HERMES_MARKER_PATTERN); fall back if absent.
+    marker_pattern_default = app_config.get(
+        'TTS_HERMES_MARKER_PATTERN',
+        Config.TTS_HERMES_MARKER_PATTERN,
+    )
     emoji_default = app_config.get('TTS_EMOJI_HANDLING', 'strip')
     drop_source_links_default = app_config.get('TTS_DROP_SOURCE_LINKS', briefing_mode)
 
@@ -154,6 +160,11 @@ def _build_pipeline_config(data: dict, app_config) -> TtsPipelineConfig:
         drop_source_links_section=_coerce_bool(
             data.get('drop_source_links_section'),
             drop_source_links_default,
+        ),
+        # Client-marker regex. Request may override the server/env default; an explicit empty
+        # value disables marker stripping, and absence falls back to the configured default.
+        marker_pattern=(
+            marker_pattern_default if 'marker_pattern' not in data else str(data.get('marker_pattern'))
         ),
     )
 
@@ -274,6 +285,9 @@ def list_voices():
                     'name': v['name'],
                     'object': 'voice',
                     'type': v.get('type', 'builtin'),
+                    # OpenAI-compatible field. Built-ins are 0 (part of the model); custom
+                    # voices carry their file mtime so clients can sort/dedupe stably.
+                    'created_at': v.get('created_at', 0),
                 }
                 for v in voices
             ],

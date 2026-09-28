@@ -66,6 +66,25 @@ def test_health_and_ready_are_exempt_from_auth():
 
 
 # ─────────────────────────────────────────────
+# /v1/voices shape (OpenAI-compatible created_at)
+# ─────────────────────────────────────────────
+def test_voices_entries_include_created_at():
+    client = make_app().test_client()
+    resp = client.get('/v1/voices')
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body['object'] == 'list'
+    data = body['data']
+    assert len(data) > 0
+    for entry in data:
+        # Every voice carries a stable integer created_at (OpenAI-compatible field).
+        assert isinstance(entry['created_at'], int)
+        if entry.get('type') == 'builtin':
+            # Built-ins are part of the model → epoch 0.
+            assert entry['created_at'] == 0
+
+
+# ─────────────────────────────────────────────
 # Input-length cap
 # ─────────────────────────────────────────────
 def test_oversized_input_is_rejected_with_413():
