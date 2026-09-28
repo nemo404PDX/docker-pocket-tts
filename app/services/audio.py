@@ -7,6 +7,7 @@ import math
 import struct
 from pathlib import Path
 
+import soundfile as sf
 import torch
 import torchaudio
 
@@ -260,7 +261,7 @@ def normalize_voice_wavs(
 def _get_bits_per_sample(path: str) -> int | None:
     """Best-effort bit depth lookup for diagnostic logging."""
     try:
-        info = torchaudio.info(path)
+        info = sf.info(path)
     except Exception:
         return None
     return getattr(info, 'bits_per_sample', None)

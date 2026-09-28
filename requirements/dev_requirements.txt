@@ -1,0 +1,3 @@
+# Dev/test dependencies — install on top of cpu_requirements.txt:
+#   uv pip install -r requirements/cpu_requirements.txt -r requirements/dev_requirements.txt
+pytest>=8.0

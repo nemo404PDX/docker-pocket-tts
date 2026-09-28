@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Environment / secrets — never commit real values (.env.example stays tracked)
+.env
+
+# Test artifacts
+.pytest_cache/
+test.wav
+
+# Downloaded model weights and runtime logs (large, machine-local)
+data/models/*
+!data/models/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
