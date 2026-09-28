@@ -142,9 +142,21 @@ The app reads `HF_TOKEN`, or falls back to the file at `HF_TOKEN_FILE` (default 
 ## Voices
 
 - **Built-in:** ~27 Pocket TTS voices (`alba`, `marius`, `jean`, …). The list is derived from the installed `pocket-tts` package, so it tracks upstream automatically — see `GET /v1/voices`.
-- **Custom:** drop `.wav`/`.mp3`/`.flac` files into `data/voices/`. Reference them by filename (e.g. `"voice": "my_voice.wav"`) or bare stem if unique. Startup normalizes WAV loudness to a target level (disable with `POCKET_TTS_SKIP_VOICE_NORMALIZE`).
+- **Custom:** drop `.wav`/`.mp3`/`.flac` files into `data/voices/`. Reference them by filename (e.g. `"voice": "ada.wav"`) or bare stem if unique. Startup normalizes WAV loudness to a target level (disable with `POCKET_TTS_SKIP_VOICE_NORMALIZE`).
 
-> Note: a custom file whose name matches a built-in voice (e.g. `alba.wav`) is shadowed — the built-in wins for bare-name requests; use the full filename (`"alba.wav"`) to force the local file.
+Shipped custom voices (short names, easy to thumb-type in a GUI / mobile client):
+
+| File | Voice id (bare) |
+| ---- | --------------- |
+| `ada.wav`   | `ada` |
+| `amy.wav`   | `amy` |
+| `eli.wav`   | `eli` |
+| `ellie.wav` | `ellie` |
+| `emi.wav`   | `emi` |
+| `max.wav`   | `max` |
+| `default.wav` | `default` (also the default voice when present) |
+
+> Note: a custom file whose name matches a built-in voice is shadowed — the built-in wins for bare-name requests; use the full filename to force the local file. The shipped names above were chosen specifically so none collide with a built-in, so every one resolves by its short id.
 
 ---
 

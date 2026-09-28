@@ -27,5 +27,5 @@ CI (`.github/workflows/tests.yml`) runs the same on Python 3.11 with CPU require
 ## Gotchas
 - **Log-level precedence:** `setup_logging(level)` re-applies an *explicit* level to existing handlers, but a no-arg call leaves the first caller authoritative. Don't rely on calling it twice with defaults to change the level.
 - **`/debug/normalize`** is gated behind `POCKET_TTS_DEBUG_LOG=true` (it echoes request content). Leave it off in production.
-- **Voice shadowing:** a custom file named like a built-in (`alba.wav`) loses to the built-in for bare-name requests; clients must send the full filename to force the local file.
+- **Voice shadowing:** a custom file named like a built-in (`alba.wav`) loses to the built-in for bare-name requests; clients must send the full filename to force the local file. The shipped custom voices use short non-colliding names (`ada`, `amy`, `eli`, `ellie`, `emi`, `max`) so each resolves by its bare id — keep new ones that way too.
 - **Compose vs `.env`:** compose's `environment:` block only sets container-internal paths + `HF_TOKEN_FILE`. Everything user-facing lives in `.env`/`.env.example`, not compose.
