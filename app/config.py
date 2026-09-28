@@ -35,6 +35,30 @@ def get_data_root(base_path: Path) -> Path:
     return base_path / 'data'
 
 
+def _builtin_voice_names() -> list[str]:
+    """Return pocket-tts' built-in voice names, derived from the installed package.
+
+    Reads the private ``_ORIGINS_OF_PREDEFINED_VOICES`` mapping so this stays in
+    sync with upstream automatically. Falls back to a minimal known set if that
+    symbol is ever renamed or removed (keeps the server importable).
+    """
+    try:
+        from pocket_tts.utils.utils import _ORIGINS_OF_PREDEFINED_VOICES
+
+        return sorted(_ORIGINS_OF_PREDEFINED_VOICES)
+    except Exception:  # pragma: no cover - defensive fallback
+        return [
+            'alba',
+            'marius',
+            'javert',
+            'jean',
+            'fantine',
+            'cosette',
+            'eponine',
+            'azelma',
+        ]
+
+
 class Config:
     """Application configuration loaded from environment variables."""
 
@@ -112,8 +136,11 @@ class Config:
     LOG_MAX_BYTES = int(os.environ.get('POCKET_TTS_LOG_MAX_BYTES', str(10 * 1024 * 1024)))  # 10MB
     LOG_BACKUP_COUNT = int(os.environ.get('POCKET_TTS_LOG_BACKUP_COUNT', '5'))
 
-    # Built-in voice mappings (these are resolved by pocket-tts internally)
-    BUILTIN_VOICES = ['alba', 'marius', 'javert', 'jean', 'fantine', 'cosette', 'eponine', 'azelma']
+    # Built-in voice names, resolved by pocket-tts internally. Derived from the
+    # installed package so we track upstream instead of drifting (the old hardcoded
+    # list had 8; pocket-tts ships ~27). Falls back to a minimal set if the private
+    # symbol is ever renamed/removed.
+    BUILTIN_VOICES = _builtin_voice_names()
 
     # Supported audio extensions for custom voices
-    VOICE_EXTENSIONS = ('.wav', '.mp3', '.flac', '.safetensors')
+    VOICE_EXTENSIONS = ('.wav', '.mp3', '.flac')
