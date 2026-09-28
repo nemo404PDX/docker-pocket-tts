@@ -88,16 +88,12 @@ class Config:
 
     # Model settings
     MODEL_PATH = os.environ.get('POCKET_TTS_MODEL_PATH', None)
+    # HF cache dir. pocket-tts resolves weights from here first (offline-friendly):
+    # pre-populate it with `hf download kyutai/pocket-tts` and the server loads
+    # locally without hitting HuggingFace at startup.
     MODEL_CACHE_DIR = os.environ.get(
         'POCKET_TTS_MODEL_CACHE_DIR',
         str(DATA_ROOT / 'models' / 'pocket-tts'),
-    )
-    LOCAL_MODEL_DIR = os.environ.get(
-        'POCKET_TTS_LOCAL_MODEL_DIR',
-        str(DATA_ROOT / 'models' / 'kyutai' / 'pocket-tts'),
-    )
-    PREFER_LOCAL_CLONING_MODEL = (
-        os.environ.get('POCKET_TTS_PREFER_LOCAL_CLONING_MODEL', 'true').lower() == 'true'
     )
     REQUIRE_VOICE_CLONING = (
         os.environ.get('POCKET_TTS_REQUIRE_VOICE_CLONING', 'false').lower() == 'true'

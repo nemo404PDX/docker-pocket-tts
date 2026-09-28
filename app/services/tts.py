@@ -81,83 +81,6 @@ def _load_hf_token() -> str | None:
     return secret or None
 
 
-def _build_local_cloning_config() -> str | None:
-    """
-    Build a local PocketTTS config that points to locally downloaded cloning weights.
-
-    Expected supported layouts:
-      <MODEL_CACHE_DIR>/models--kyutai--pocket-tts/snapshots/<rev>/tts_b6369a24.safetensors
-      <LOCAL_MODEL_DIR>/tts_b6369a24.safetensors
-    """
-    if not Config.PREFER_LOCAL_CLONING_MODEL:
-        return None
-
-    cache_root = _safe_path(Config.MODEL_CACHE_DIR)
-    cache_root.mkdir(parents=True, exist_ok=True)
-
-    local_weights = None
-    local_tokenizer = None
-
-    # Layout 1: direct local-dir download (e.g. hf download --local-dir)
-    local_repo_dir = _safe_path(Config.LOCAL_MODEL_DIR)
-    direct_weights = local_repo_dir / 'tts_b6369a24.safetensors'
-    direct_tokenizer = local_repo_dir / 'tokenizer.model'
-    if direct_weights.is_file():
-        local_weights = direct_weights
-        if direct_tokenizer.is_file():
-            local_tokenizer = direct_tokenizer
-
-    # Layout 2: huggingface_hub snapshots cache
-    if local_weights is None:
-        snapshots_root = cache_root / 'models--kyutai--pocket-tts' / 'snapshots'
-        if snapshots_root.is_dir():
-            candidates = sorted(
-                snapshots_root.glob('*/tts_b6369a24.safetensors'),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            if candidates:
-                local_weights = _safe_path(str(candidates[0]))
-                tokenizer_candidate = local_weights.parent / 'tokenizer.model'
-                if tokenizer_candidate.is_file():
-                    local_tokenizer = _safe_path(str(tokenizer_candidate))
-
-    try:
-        import pocket_tts as pocket_tts_pkg
-    except ImportError:
-        return None
-
-    default_config = Path(pocket_tts_pkg.__file__).parent / 'config' / 'b6369a24.yaml'
-    if not default_config.is_file():
-        return None
-
-    local_config = cache_root / 'local-b6369a24.yaml'
-    config_text = default_config.read_text(encoding='utf-8')
-    if local_weights is not None:
-        preferred_weights_path = local_weights.as_posix()
-    else:
-        # Prefer the cloning repo directly when local files are not present.
-        preferred_weights_path = (
-            'hf://kyutai/pocket-tts/tts_b6369a24.safetensors@427e3d61b276ed69fdd03de0d185fa8a8d97fc5b'
-        )
-
-    if local_tokenizer is not None:
-        preferred_tokenizer_path = local_tokenizer.as_posix()
-    else:
-        preferred_tokenizer_path = 'hf://kyutai/pocket-tts/tokenizer.model'
-
-    config_text = config_text.replace(
-        'weights_path: hf://kyutai/pocket-tts/tts_b6369a24.safetensors@427e3d61b276ed69fdd03de0d185fa8a8d97fc5b',
-        f'weights_path: {preferred_weights_path}',
-    )
-    config_text = config_text.replace(
-        'tokenizer_path: hf://kyutai/pocket-tts-without-voice-cloning/tokenizer.model@d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3',
-        f'tokenizer_path: {preferred_tokenizer_path}',
-    )
-    local_config.write_text(config_text, encoding='utf-8')
-    return str(local_config)
-
-
 class TTSService:
     """
     Service class for Text-to-Speech operations.
@@ -206,24 +129,16 @@ class TTSService:
         logger.info('Using model cache directory: %s', os.environ.get('HUGGINGFACE_HUB_CACHE'))
         t0 = time.time()
 
-        # Determine model path
+        # Determine model path: explicit config, or the default (which resolves
+        # from HuggingFace, or from the local HF cache when weights are present).
         effective_path = model_path
-
-        if not effective_path:
-            preferred_config = _build_local_cloning_config()
-            if preferred_config:
-                effective_path = preferred_config
-                logger.info('Using preferred cloning model config: %s', effective_path)
-
-        if not effective_path:
-            logger.info('Loading default model from HuggingFace...')
 
         try:
             if effective_path:
                 logger.info(f'Loading model from: {effective_path}')
                 self.model = TTSModel.load_model(config=effective_path)
             else:
-                logger.info('Loading default model from HuggingFace...')
+                logger.info('Loading default model (HuggingFace or local HF cache)...')
                 self.model = TTSModel.load_model()
 
             if Config.REQUIRE_VOICE_CLONING and not getattr(self.model, 'has_voice_cloning', True):

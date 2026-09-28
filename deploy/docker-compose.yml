@@ -12,7 +12,6 @@ services:
     environment:
       # Container-internal paths only — user-facing settings live in ../.env.
       POCKET_TTS_MODEL_CACHE_DIR: /data/models/pocket-tts
-      POCKET_TTS_LOCAL_MODEL_DIR: /data/models/kyutai/pocket-tts
       POCKET_TTS_VOICES_DIR: /data/voices
       # stdout-only logging: Docker's log driver (below) captures and rotates it.
       # Set POCKET_TTS_LOG_TO_FILE=true in ../.env to also write file logs, but

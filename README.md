@@ -113,10 +113,8 @@ All optional — defaults preserve existing behavior, so nothing changes unless 
 ### Model
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
-| `POCKET_TTS_MODEL_PATH` | — | Explicit model path/variant (overrides auto-discovery). |
-| `POCKET_TTS_MODEL_CACHE_DIR` | `<data>/models/pocket-tts` | HF cache dir. Compose sets `/data/models/pocket-tts`. |
-| `POCKET_TTS_LOCAL_MODEL_DIR` | `<data>/models/kyutai/pocket-tts` | Direct local repo path. Compose sets `/data/models/kyutai/pocket-tts`. |
-| `POCKET_TTS_PREFER_LOCAL_CLONING_MODEL` | `true` | Prefer locally-downloaded cloning snapshots. |
+| `POCKET_TTS_MODEL_PATH` | — | Explicit model config path (`.yaml`) or variant name; overrides the default. |
+| `POCKET_TTS_MODEL_CACHE_DIR` | `<data>/models/pocket-tts` | HF cache dir. Compose sets `/data/models/pocket-tts`. Pre-populate it (`hf download kyutai/pocket-tts --local-dir …`) and the server loads weights from disk without hitting HuggingFace at startup. |
 | `POCKET_TTS_REQUIRE_VOICE_CLONING` | `false` | Fail startup if voice-cloning weights are missing (else fall back to without-voice-cloning). |
 
 ### Voices
