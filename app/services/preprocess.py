@@ -1,6 +1,11 @@
 """
 Adapted and supplemented from origional at https://github.com/KittenML/KittenTTS/blob/main/kittentts/preprocess.py
 See license at: https://github.com/KittenML/KittenTTS/blob/main/LICENSE (Apache 2.0)
+
+Trimmed to the stages this project actually uses (see _NUMBER_PREPROCESSOR in
+normalize.py). Unused KittenTTS helpers (URL/email/hashtag removal, lowercase,
+stopwords, symbol expansion, roman numerals, month expansion, ...) were removed;
+restore from git history or upstream if ever needed.
 """
 
 import re
@@ -68,23 +73,6 @@ _CURRENCY_SCALE_MAP = {
     'billion': 'billion',
     'trillion': 'trillion',
 }
-
-_ROMAN = [
-    (1000, 'M'),
-    (900, 'CM'),
-    (500, 'D'),
-    (400, 'CD'),
-    (100, 'C'),
-    (90, 'XC'),
-    (50, 'L'),
-    (40, 'XL'),
-    (10, 'X'),
-    (9, 'IX'),
-    (5, 'V'),
-    (4, 'IV'),
-    (1, 'I'),
-]
-_RE_ROMAN = re.compile(r'\b(M{0,4})(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})\b')
 
 
 def _three_digits_to_words(n: int) -> str:
@@ -173,56 +161,11 @@ def float_to_words(value, decimal_sep: str = 'point') -> str:
     return f'negative {result}' if negative else result
 
 
-def roman_to_int(s: str) -> int:
-    """Convert a Roman numeral string to an integer."""
-    val = {'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
-    result = 0
-    prev = 0
-    for ch in reversed(s.upper()):
-        curr = val[ch]
-        result += curr if curr >= prev else -curr
-        prev = curr
-    return result
-
-
 # ─────────────────────────────────────────────
 # Regex patterns
 # ─────────────────────────────────────────────
 
-_RE_URL = re.compile(r'https?://\S+|www\.\S+')
-_RE_EMAIL = re.compile(r'\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b', re.IGNORECASE)
-_RE_HASHTAG = re.compile(r'#\w+')
-_RE_MENTION = re.compile(r'@\w+')
 _RE_HTML = re.compile(r'<[^>]+>')
-_RE_PUNCT = re.compile(r'[^\w\s]')
-_RE_SPACES = re.compile(r'\s+')
-_RE_AI = re.compile(r'\bAI\b')
-_RE_DOT_COM = re.compile(r'\.com\b', re.IGNORECASE)
-_RE_PLUS = re.compile(r'\+')
-_RE_AMPERSAND = re.compile(r'&')
-_RE_AT_SYMBOL = re.compile(r'@')
-_RE_NEWLINE = re.compile(r'[\r\n]+')
-_RE_TILDE = re.compile(r'~')
-
-_MONTH_MAP = {
-    'Jan': 'January',
-    'Feb': 'February',
-    'Mar': 'March',
-    'Apr': 'April',
-    'Jun': 'June',
-    'Jul': 'July',
-    'Aug': 'August',
-    'Sep': 'September',
-    'Sept': 'September',
-    'Oct': 'October',
-    'Nov': 'November',
-    'Dec': 'December',
-}
-
-# Regex looks for Title Case months followed by a period or a digit
-# We handle "May" separately because it's a common word.
-_RE_MONTHS = re.compile(r'\b(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\b(?=\s*\d|\s*$)')
-_RE_MAY = re.compile(r'\bMay\b(?=\s*\d)')  # Only expand May if followed by a number (May 5)
 
 # Number: do NOT match a leading minus if it is immediately preceded by a letter
 # (handles "gpt-3", "gpl-3", "v-2" etc.)
@@ -248,7 +191,7 @@ _RE_RANGE = re.compile(r'(?<!\w)(\d+)-(\d+)(?!\w)')
 
 # Version/model names: gpt-3, gpt-3.5, v2.0, Python-3.10, GPL-3
 # Letter(s) + hyphen + digit(s) [+ more version parts]
-_RE_MODEL_VER = re.compile(r'\b([a-zA-Z][a-zA-Z0-9]*)-(\d[\d.]*)(?=[^\d.]|$)')
+_RE_MODEL_VER = re.compile(r'\b([a-zA-Z][a-zA-Z0-9]*)-(\d[\d.]*)?(?=[^\d.]|$)')
 
 # Measurement units glued to numbers: 100km, 50kg, 25°C, 5GB
 _RE_UNIT = re.compile(
@@ -324,29 +267,6 @@ def expand_years(text: str) -> str:
     return _RE_YEAR.sub(_replace, text)
 
 
-def expand_abbreviations(text: str) -> str:
-    """
-    Handles specific abbreviations before lowercase normalization.
-    AI -> A.I.
-    .com -> dot com
-    """
-    # 1. AI to A.I. (Case sensitive)
-    text = _RE_AI.sub('A.I.', text)
-    # 2. .com to dot com
-    text = _RE_DOT_COM.sub(' dot com', text)
-    return text
-
-
-def expand_symbols(text: str) -> str:
-    """
-    Translates mathematical and connector symbols to words.
-    """
-    text = _RE_PLUS.sub(' plus ', text)
-    text = _RE_AMPERSAND.sub(' and ', text)
-    text = _RE_AT_SYMBOL.sub(' at ', text)
-    return text
-
-
 def _ordinal_suffix(n: int) -> str:
     """Return the ordinal word for n (e.g. 1 → 'first', 5 → 'fifth', 21 → 'twenty-first')."""
     word = number_to_words(n)
@@ -410,16 +330,6 @@ def expand_percentages(text: str) -> str:
         return number_to_words(int(raw)) + ' percent'
 
     return _RE_PERCENT.sub(_replace, text)
-
-
-def expand_newlines(text: str) -> str:
-    """Change newlines/returns to a period and space for TTS pausing."""
-    return _RE_NEWLINE.sub('. ', text)
-
-
-def expand_tilde(text: str) -> str:
-    """Change ~ to 'about'."""
-    return _RE_TILDE.sub('about ', text)
 
 
 def expand_currency(text: str) -> str:
@@ -567,46 +477,6 @@ def expand_units(text: str) -> str:
         return f'{num} {expanded}'
 
     return _RE_UNIT.sub(_replace, text)
-
-
-def expand_roman_numerals(text: str, context_words: bool = True) -> str:
-    """
-    Expand Roman numerals that appear as standalone tokens (optionally
-    only when preceded by a title-like word to avoid false positives).
-
-    Examples:
-        "World War II"     → "World War two"
-        "Chapter IV"       → "Chapter four"
-        "Louis XIV"        → "Louis fourteen"
-        "mix I with V"     → left unchanged (ambiguous single letters)
-    """
-    _TITLE_WORDS = re.compile(
-        r'\b(war|chapter|part|volume|act|scene|book|section|article|'
-        r'king|queen|pope|louis|henry|edward|george|william|james|'
-        r'phase|round|level|stage|class|type|version|episode|season)\b',
-        re.IGNORECASE,
-    )
-
-    def _replace(m: re.Match) -> str:
-        roman = m.group(0)
-        if not roman.strip():
-            return roman
-        # Skip single ambiguous letters (I, V, X) unless context present
-        if len(roman) == 1 and roman in 'IVX':
-            # Only expand if preceded by a title word
-            start = m.start()
-            preceding = text[max(0, start - 30) : start]
-            if not _TITLE_WORDS.search(preceding):
-                return roman
-        try:
-            val = roman_to_int(roman)
-            if val == 0:
-                return roman
-            return number_to_words(val)
-        except Exception:
-            return roman
-
-    return _RE_ROMAN.sub(_replace, text)
 
 
 def normalize_leading_decimals(text: str) -> str:
@@ -793,41 +663,32 @@ def expand_phone_numbers(text: str) -> str:
     # Match longest pattern first to avoid partial matches
     # 11-digit: 1-800-555-0199
     text = re.sub(
-        r'(?<!\d-)(?<!\d)\b(\d{1,2})-(\d{3})-(\d{3})-(\d{4})\b(?!-\d)',
+        r'(?<!\d-)(?<!\d)\b(\d{1,2})-(\d{3})-(\d{3})-(\d{4})\b(?!\-\d)',
         lambda m: _join(*m.groups()),
         text,
     )
     # 10-digit: 555-123-4567
     text = re.sub(
-        r'(?<!\d-)(?<!\d)\b(\d{3})-(\d{3})-(\d{4})\b(?!-\d)', lambda m: _join(*m.groups()), text
+        r'(?<!\d-)(?<!\d)\b(\d{3})-(\d{3})-(\d{4})\b(?!\-\d)', lambda m: _join(*m.groups()), text
     )
     # 7-digit local: 555-1234 (not preceded or followed by digit-hyphen to avoid sub-matching)
-    text = re.sub(r'(?<!\d-)\b(\d{3})-(\d{4})\b(?!-\d)', lambda m: _join(*m.groups()), text)
+    text = re.sub(r'(?<!\d-)\b(\d{3})-(\d{4})\b(?!\-\d)', lambda m: _join(*m.groups()), text)
     return text
 
 
-def expand_months(text: str) -> str:
-    """
-    Expands Jan, Feb, etc. to January, February.
-    Only triggers if the abbreviation is likely a date.
-    """
+def remove_html_tags(text: str) -> str:
+    """Strip HTML tags from text."""
+    return _RE_HTML.sub(' ', text)
 
-    def _replace(m: re.Match) -> str:
-        return _MONTH_MAP.get(m.group(1), m.group(1))
 
-    # 1. Standard abbreviations
-    text = _RE_MONTHS.sub(_replace, text)
-
-    # 2. May (Special case: only if followed by a digit)
-    text = _RE_MAY.sub('May', text)  # Essentially just ensuring it's treated as a word
-
-    return text
+def normalize_unicode(text: str, form: str = 'NFC') -> str:
+    """Normalize unicode characters (NFC, NFD, NFKC, or NFKD)."""
+    return unicodedata.normalize(form, text)
 
 
 # ─────────────────────────────────────────────
 # Core preprocessing functions
 # ─────────────────────────────────────────────
-
 
 def replace_numbers(text: str, replace_floats: bool = True) -> str:
     """
@@ -853,153 +714,6 @@ def replace_numbers(text: str, replace_floats: bool = True) -> str:
     return _RE_NUMBER.sub(_replace, text)
 
 
-def to_lowercase(text: str) -> str:
-    """Convert text to lowercase."""
-    return text.lower()
-
-
-def remove_urls(text: str, replacement: str = '') -> str:
-    """Remove URLs from text."""
-    return _RE_URL.sub(replacement, text).strip()
-
-
-def remove_emails(text: str, replacement: str = '') -> str:
-    """Remove email addresses from text."""
-    return _RE_EMAIL.sub(replacement, text).strip()
-
-
-def remove_html_tags(text: str) -> str:
-    """Strip HTML tags from text."""
-    return _RE_HTML.sub(' ', text)
-
-
-def remove_hashtags(text: str, replacement: str = '') -> str:
-    """Remove hashtags (e.g. #NLP) from text."""
-    return _RE_HASHTAG.sub(replacement, text)
-
-
-def remove_mentions(text: str, replacement: str = '') -> str:
-    """Remove @mentions from text."""
-    return _RE_MENTION.sub(replacement, text)
-
-
-def remove_punctuation(text: str) -> str:
-    """Remove all punctuation characters."""
-    return _RE_PUNCT.sub(' ', text)
-
-
-def remove_extra_whitespace(text: str) -> str:
-    """Collapse multiple whitespace characters into a single space and strip ends."""
-    return _RE_SPACES.sub(' ', text).strip()
-
-
-def normalize_unicode(text: str, form: str = 'NFC') -> str:
-    """Normalize unicode characters (NFC, NFD, NFKC, or NFKD)."""
-    return unicodedata.normalize(form, text)
-
-
-def remove_accents(text: str) -> str:
-    """Remove diacritical marks (accents) from characters."""
-    nfkd = unicodedata.normalize('NFD', text)
-    return ''.join(c for c in nfkd if unicodedata.category(c) != 'Mn')
-
-
-def expand_contractions(text: str) -> str:
-    """
-    Expand common English contractions.
-
-    Examples:
-        "don't"   → "do not"
-        "they're" → "they are"
-        "I've"    → "I have"
-    """
-    contractions = {
-        r"\bcan't\b": 'cannot',
-        r"\bwon't\b": 'will not',
-        r"\bshan't\b": 'shall not',
-        r"\bain't\b": 'is not',
-        r"\blet's\b": 'let us',
-        r"\b(\w+)n't\b": r'\1 not',
-        r"\b(\w+)'re\b": r'\1 are',
-        r"\b(\w+)'ve\b": r'\1 have',
-        r"\b(\w+)'ll\b": r'\1 will',
-        r"\b(\w+)'d\b": r'\1 would',
-        r"\b(\w+)'m\b": r'\1 am',
-        r"\bit's\b": 'it is',
-    }
-    for pattern, replacement in contractions.items():
-        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-    return text
-
-
-def remove_stopwords(text: str, stopwords: set | None = None) -> str:
-    """
-    Remove stopwords from text.
-
-    Args:
-        stopwords: Set of words to remove. Uses a built-in English set if None.
-    """
-    if stopwords is None:
-        stopwords = {
-            'a',
-            'an',
-            'the',
-            'and',
-            'or',
-            'but',
-            'in',
-            'on',
-            'at',
-            'to',
-            'for',
-            'of',
-            'with',
-            'by',
-            'from',
-            'is',
-            'was',
-            'are',
-            'were',
-            'be',
-            'been',
-            'being',
-            'have',
-            'has',
-            'had',
-            'do',
-            'does',
-            'did',
-            'will',
-            'would',
-            'could',
-            'should',
-            'may',
-            'might',
-            'this',
-            'that',
-            'these',
-            'those',
-            'it',
-            'its',
-            'i',
-            'me',
-            'my',
-            'we',
-            'our',
-            'you',
-            'your',
-            'he',
-            'she',
-            'him',
-            'her',
-            'they',
-            'them',
-            'their',
-        }
-    tokens = text.split()
-    return ' '.join(t for t in tokens if t.lower() not in stopwords)
-
-
 # ─────────────────────────────────────────────
 # Pipeline helper
 # ─────────────────────────────────────────────
@@ -1007,30 +721,18 @@ def remove_stopwords(text: str, stopwords: set | None = None) -> str:
 
 class TextPreprocessor:
     """
-    Configurable preprocessing pipeline.
+    Configurable preprocessing pipeline for TTS number expansion.
 
     Usage:
-        pp = TextPreprocessor(
-            lowercase=True,
-            replace_numbers=True,
-            remove_urls=True,
-            remove_html=True,
-            remove_punctuation=True,
-        )
+        pp = TextPreprocessor()
         clean = pp("GPT-3 costs $0.002 per token — 50% cheaper than before!")
-        # → "gpt three costs zero dollars and zero point two cents per token fifty percent cheaper than before"
+        # → "GPT three costs zero dollars and zero point two cents per token fifty percent cheaper than before!"
     """
 
     def __init__(
         self,
-        lowercase: bool = True,
         replace_numbers: bool = True,
         replace_floats: bool = True,
-        expand_newlines: bool = True,
-        expand_tilde: bool = True,
-        expand_abbreviations: bool = True,
-        expand_symbols: bool = True,
-        expand_contractions: bool = True,
         expand_model_names: bool = True,
         expand_ordinals: bool = True,
         expand_percentages: bool = True,
@@ -1046,50 +748,20 @@ class TextPreprocessor:
         expand_ip_addresses: bool = True,
         expand_years: bool = True,
         normalize_leading_decimals: bool = True,
-        expand_roman_numerals: bool = False,
-        remove_urls: bool = True,
-        remove_emails: bool = True,
         remove_html: bool = True,
-        remove_hashtags: bool = False,
-        remove_mentions: bool = False,
-        remove_punctuation: bool = True,
-        remove_stopwords: bool = False,
-        stopwords: set | None = None,
         normalize_unicode: bool = True,
-        remove_accents: bool = False,
-        remove_extra_whitespace: bool = True,
     ):
         self.config = {k: v for k, v in locals().items() if k != 'self'}
-        self._stopwords = stopwords
 
     def __call__(self, text: str) -> str:
         return self.process(text)
 
     def process(self, text: str) -> str:
         cfg = self.config
-        if cfg.get('expand_abbreviations'):
-            text = expand_abbreviations(text)
-            text = expand_months(text)
-        if cfg.get('expand_newlines'):
-            text = expand_newlines(text)
-        if cfg.get('expand_symbols'):
-            text = expand_symbols(text)
-        if cfg.get('expand_tilde'):
-            text = expand_tilde(text)
         if cfg['normalize_unicode']:
             text = normalize_unicode(text)
         if cfg['remove_html']:
             text = remove_html_tags(text)
-        if cfg['remove_urls']:
-            text = remove_urls(text)
-        if cfg['remove_emails']:
-            text = remove_emails(text)
-        if cfg['remove_hashtags']:
-            text = remove_hashtags(text)
-        if cfg['remove_mentions']:
-            text = remove_mentions(text)
-        if cfg['expand_contractions']:
-            text = expand_contractions(text)
         # IP addresses before normalize_leading_decimals (IPs contain dots before digits)
         # Years before generic number replacement
         if cfg['expand_years']:
@@ -1128,19 +800,7 @@ class TextPreprocessor:
             text = expand_ranges(text)
         if cfg['expand_model_names']:
             text = expand_model_names(text)
-        if cfg['expand_roman_numerals']:
-            text = expand_roman_numerals(text)
         if cfg['replace_numbers']:
             text = replace_numbers(text, replace_floats=cfg['replace_floats'])
-        if cfg['remove_accents']:
-            text = remove_accents(text)
-        if cfg['remove_punctuation']:
-            text = remove_punctuation(text)
-        if cfg['lowercase']:
-            text = to_lowercase(text)
-        if cfg['remove_stopwords']:
-            text = remove_stopwords(text, self._stopwords)
-        if cfg['remove_extra_whitespace']:
-            text = remove_extra_whitespace(text)
 
         return text

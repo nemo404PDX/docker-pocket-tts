@@ -211,15 +211,12 @@ class TtsNormDebugResult:
     steps: list[tuple[StageName, str]] = field(default_factory=list)
 
 
+# Only the number-expansion stages are enabled; everything else in this project's
+# pipeline is handled by the other normalisation steps (see below). All of these
+# are TextPreprocessor defaults — listed explicitly to document intent.
 _NUMBER_PREPROCESSOR = TextPreprocessor(
-    lowercase=False,
     replace_numbers=True,
     replace_floats=True,
-    expand_newlines=False,
-    expand_tilde=False,
-    expand_abbreviations=False,
-    expand_symbols=False,
-    expand_contractions=False,
     expand_model_names=True,
     expand_ordinals=True,
     expand_percentages=True,
@@ -234,17 +231,8 @@ _NUMBER_PREPROCESSOR = TextPreprocessor(
     expand_phone_numbers=True,
     expand_ip_addresses=True,
     normalize_leading_decimals=True,
-    expand_roman_numerals=False,
-    remove_urls=False,
-    remove_emails=False,
     remove_html=True,
-    remove_hashtags=False,
-    remove_mentions=False,
-    remove_punctuation=False,
-    remove_stopwords=False,
     normalize_unicode=True,
-    remove_accents=False,
-    remove_extra_whitespace=False,
 )
 
 

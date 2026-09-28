@@ -10,7 +10,6 @@ from flask import (
     Response,
     current_app,
     jsonify,
-    render_template,
     request,
     send_file,
     stream_with_context,
@@ -126,11 +125,8 @@ def _log_pipeline_debug(data: dict, pipeline_config: TtsPipelineConfig, segments
 
 @api.route('/')
 def home():
-    """Serve the web interface."""
-    try:
-        return render_template('index.html')
-    except Exception:
-        return jsonify({'status': 'ok', 'service': 'pocket-tts'}), 200
+    """Service info endpoint."""
+    return jsonify({'status': 'ok', 'service': 'pocket-tts'}), 200
 
 
 @api.route('/health', methods=['GET'])
@@ -253,18 +249,14 @@ def generate_speech():
     response_format = data.get('response_format', 'mp3')
     target_format = validate_format(response_format)
 
-    # Always log for debugging duplicate playback issue — remove after fix confirmed
+    # Request metadata (no text content — user input is arbitrary)
     logger.info(
-        "TTS INPUT [%s] len=%d stream=%s voice=%s: %s",
-        time.strftime('%H:%M:%S'),
+        'TTS request: len=%d stream=%s voice=%s format=%s',
         len(text),
         stream_request,
         voice,
-        text[:300],
+        target_format,
     )
-
-    if current_app.config.get('TTS_DEBUG_LOG', False):
-        logger.warning("TTS request - text length: %d chars, preview: %s", len(text), text[:200])
 
     tts = get_tts_service()
 
@@ -322,10 +314,9 @@ def generate_speech():
         segments = segment_tts_text(text, pipeline_config)
         # Log preprocessing result for debugging
         logger.info(
-            "TTS OUTPUT [%s] segments=%d: %s",
-            time.strftime('%H:%M:%S'),
+            'TTS segments: count=%d lens=%s',
             len(segments),
-            [s[:80] for s in segments[:3]],
+            [len(s) for s in segments[:8]],
         )
         if not segments:
             # Everything was stripped by preprocessing — fall back to a brief phrase

@@ -31,11 +31,7 @@ def create_app(config_overrides: dict = None) -> 'Flask':
     logger = get_logger()
 
     # Create Flask app with correct paths
-    app = Flask(
-        __name__,
-        template_folder=Config.get_template_folder(),
-        static_folder=Config.get_static_folder(),
-    )
+    app = Flask(__name__)
 
     # Apply default config
     app.config['STREAM_DEFAULT'] = Config.STREAM_DEFAULT
@@ -90,11 +86,11 @@ def init_tts_service(
         normalize_voice_wavs(voices_dir, skip=skip_voice_normalize)
         tts.set_voices_dir(voices_dir)
     else:
-        # Check for bundled voices
-        bundle_voices, _ = Config.get_bundle_paths()
-        if bundle_voices:
-            normalize_voice_wavs(bundle_voices, skip=skip_voice_normalize)
-            tts.set_voices_dir(bundle_voices)
+        # Fall back to the default data/voices directory when it exists
+        default_voices = Config.DATA_ROOT / 'voices'
+        if default_voices.is_dir():
+            normalize_voice_wavs(str(default_voices), skip=skip_voice_normalize)
+            tts.set_voices_dir(str(default_voices))
 
     logger.info('TTS service initialized')
 

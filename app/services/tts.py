@@ -211,11 +211,7 @@ class TTSService:
                 logger.info('Using preferred cloning model config: %s', effective_path)
 
         if not effective_path:
-            # Check for bundled model in frozen executable
-            _, bundle_model = Config.get_bundle_paths()
-            if bundle_model and os.path.isfile(bundle_model):
-                effective_path = bundle_model
-                logger.info(f'Using bundled model: {effective_path}')
+            logger.info('Loading default model from HuggingFace...')
 
         try:
             if effective_path:

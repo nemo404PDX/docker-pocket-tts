@@ -9,14 +9,7 @@ from pathlib import Path
 
 
 def get_base_path() -> Path:
-    """Get the base path for the application, handling PyInstaller frozen state."""
-    if getattr(sys, 'frozen', False):
-        if hasattr(sys, '_MEIPASS'):
-            # One-file mode
-            return Path(sys._MEIPASS)
-        else:
-            # One-dir mode
-            return Path(sys.executable).parent
+    """Get the base path for the application (repo root)."""
     return Path(__file__).parent.parent
 
 
@@ -43,7 +36,6 @@ class Config:
     # Base paths
     BASE_PATH = get_base_path()
     DATA_ROOT = get_data_root(BASE_PATH)
-    IS_FROZEN = getattr(sys, 'frozen', False)
 
     # Server settings
     HOST = os.environ.get('POCKET_TTS_HOST', '0.0.0.0')
@@ -120,25 +112,3 @@ class Config:
 
     # Supported audio extensions for custom voices
     VOICE_EXTENSIONS = ('.wav', '.mp3', '.flac', '.safetensors')
-
-    @classmethod
-    def get_bundle_paths(cls) -> tuple:
-        """Get bundled paths for frozen executables."""
-        if cls.IS_FROZEN:
-            voices_dir = cls.BASE_PATH / 'voices'
-            model_path = cls.BASE_PATH / 'model' / 'b6369a24.yaml'
-            return (
-                str(voices_dir) if voices_dir.is_dir() else None,
-                str(model_path) if model_path.is_file() else None,
-            )
-        return None, None
-
-    @classmethod
-    def get_template_folder(cls) -> str:
-        """Get the templates folder path."""
-        return str(cls.BASE_PATH / 'templates')
-
-    @classmethod
-    def get_static_folder(cls) -> str:
-        """Get the static files folder path."""
-        return str(cls.BASE_PATH / 'static')
