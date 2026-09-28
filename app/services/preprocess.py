@@ -432,7 +432,14 @@ def expand_model_names(text: str) -> str:
         "v2.0"       stays as "v2.0" (no hyphen — handled by number replacement)
         "IPv6"       stays as "IPv6"
     """
-    return _RE_MODEL_VER.sub(lambda m: f'{m.group(1)} {m.group(2)}', text)
+    def _replace(m: re.Match) -> str:
+        # Only rewrite when there's an actual version number after the hyphen;
+        # otherwise (e.g. "ninety-five") leave the token untouched — group(2) is None.
+        if m.group(2) is None:
+            return m.group(0)
+        return f'{m.group(1)} {m.group(2)}'
+
+    return _RE_MODEL_VER.sub(_replace, text)
 
 
 def expand_units(text: str) -> str:

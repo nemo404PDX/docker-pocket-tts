@@ -48,6 +48,10 @@ def create_app(config_overrides: dict = None) -> 'Flask':
     app.config['TTS_DROP_SOURCE_LINKS'] = Config.TTS_DROP_SOURCE_LINKS
     app.config['SKIP_VOICE_NORMALIZE'] = Config.SKIP_VOICE_NORMALIZE
     app.config['TTS_DEBUG_LOG'] = Config.TTS_DEBUG_LOG
+    # Request hardening + segment gap (read by routes at request time)
+    app.config['MAX_INPUT_CHARS'] = Config.MAX_INPUT_CHARS
+    app.config['API_KEY'] = Config.API_KEY
+    app.config['SEGMENT_GAP_MS'] = Config.SEGMENT_GAP_MS
     app.config['DEFAULT_VOICE'] = Config.DEFAULT_VOICE
     app.config['FALLBACK_UNKNOWN_VOICE'] = Config.FALLBACK_UNKNOWN_VOICE
 

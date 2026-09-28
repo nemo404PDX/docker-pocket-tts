@@ -69,6 +69,22 @@ class Config:
     # Server settings
     HOST = os.environ.get('POCKET_TTS_HOST', '0.0.0.0')
     PORT = int(os.environ.get('POCKET_TTS_PORT', '49112'))
+    # Waitress worker threads (only used by the `python server.py` path; the
+    # container path is driven by whatever WSGI runner the image invokes).
+    THREADS = int(os.environ.get('POCKET_TTS_THREADS', '4'))
+
+    # Request hardening
+    # Reject synthesis requests whose input exceeds this many characters so a
+    # single client can't pin the CPU with an unbounded payload. 0 disables the cap.
+    MAX_INPUT_CHARS = int(os.environ.get('POCKET_TTS_MAX_INPUT_CHARS', str(32 * 1000)))
+    # Optional bearer-token auth. When set, every API route (except /health and
+    # /ready) requires `Authorization: Bearer <key>`. Unset/empty disables it so
+    # existing local setups keep working unchanged.
+    API_KEY = os.environ.get('POCKET_TTS_API_KEY') or None
+
+    # Voice cache bound — cap how many loaded voice states we hold in memory so a
+    # client cycling through many custom voices can't grow the cache without limit.
+    MAX_CACHED_VOICES = int(os.environ.get('POCKET_TTS_MAX_CACHED_VOICES', '8'))
 
     # Model settings
     MODEL_PATH = os.environ.get('POCKET_TTS_MODEL_PATH', None)
@@ -99,6 +115,11 @@ class Config:
 
     # Streaming default
     STREAM_DEFAULT = os.environ.get('POCKET_TTS_STREAM_DEFAULT', 'false').lower() == 'true'
+
+    # Silence inserted between synthesized segments (ms). Long text is split into
+    # segments and concatenated; without a gap the sentences run together with no
+    # breathing room. 0 disables the gap entirely.
+    SEGMENT_GAP_MS = int(os.environ.get('POCKET_TTS_SEGMENT_GAP_MS', '200'))
 
     # Text preprocessing default
     TEXT_PREPROCESS_DEFAULT = (

@@ -2,6 +2,8 @@
 Flask routes for the OpenAI-compatible TTS API.
 """
 
+import hmac
+import secrets
 import time
 
 import torch
@@ -65,6 +67,50 @@ def _validated_choice(value, valid: set[str], default: str) -> str:
         return default
     normalized = value.strip().lower()
     return normalized if normalized in valid else default
+
+
+# Routes that must stay reachable without auth (container health/readiness probes).
+_AUTH_EXEMPT_ROUTES = {'/health', '/ready'}
+
+
+def _check_api_key():
+    """Optional bearer-token guard.
+
+    When ``API_KEY`` is set, every route except the health/readiness probes must
+    present a matching ``Authorization: Bearer <key>`` header. Comparison uses a
+    constant-time check to avoid leaking the key via timing. Returns an error
+    response tuple when auth fails, or None when the request may proceed.
+    """
+    expected = current_app.config.get('API_KEY')
+    if not expected:
+        return None
+
+    path = request.path.rstrip('/') or '/'
+    if path in _AUTH_EXEMPT_ROUTES:
+        return None
+
+    provided = (request.headers.get('Authorization') or '').strip()
+    # Accept "Bearer <key>" (case-insensitive scheme) or a bare key.
+    token = provided[7:].strip() if provided[:7].lower() == 'bearer ' else provided
+    if not hmac.compare_digest(token, expected):
+        return jsonify(
+            {
+                'error': {
+                    'message': 'Invalid or missing API key',
+                    'type': 'authentication_error',
+                    'code': None,
+                }
+            }
+        ), 401
+
+
+def _openai_error(message: str, err_type: str = 'invalid_request_error', code=None):
+    """Build an OpenAI-shaped error envelope so standard clients parse it cleanly."""
+    return jsonify({'error': {'message': message, 'type': err_type, 'code': code}})
+
+
+# Enforce the optional API key on every route (health/readiness are exempt).
+api.before_request(_check_api_key)
 
 
 def _build_pipeline_config(data: dict, app_config) -> TtsPipelineConfig:
@@ -244,11 +290,27 @@ def generate_speech():
     data = request.get_json(silent=True)
 
     if not data:
-        return jsonify({'error': 'Missing JSON body'}), 400
+        return _openai_error('Missing JSON body', code='invalid_request'), 400
 
     text = data.get('input') or data.get('text')
     if not text:
-        return jsonify({'error': "Missing 'input' text"}), 400
+        return _openai_error("Missing 'input' text", code='missing_input'), 400
+
+    # Reject unreasonably large payloads before they reach the model. A single
+    # client could otherwise pin the CPU by POSTing megabytes of text.
+    max_chars = current_app.config.get('MAX_INPUT_CHARS', 0) or 0
+    if max_chars and len(text) > max_chars:
+        logger.warning(
+            'Rejecting TTS request: input %d chars exceeds cap %d', len(text), max_chars
+        )
+        return (
+            _openai_error(
+                f"Input too long: {len(text)} characters exceeds the maximum of "
+                f"{max_chars}. Split your text into smaller requests.",
+                code='input_too_long',
+            ),
+            413,
+        )
 
     voice = data.get('voice') or current_app.config.get('DEFAULT_VOICE', 'alba')
     if isinstance(voice, str) and voice.lower() in OPENAI_VOICE_ALIASES:
@@ -282,13 +344,21 @@ def generate_speech():
     if not is_valid:
         available = [v['id'] for v in tts.list_voices()]
         logger.warning("Invalid voice '%s' requested. Available sample: %s", voice, available[:5])
-        return jsonify(
-            {
-                'error': f"Voice '{voice}' not found",
-                'available_voices': available[:10],  # Limit to first 10
-                'hint': 'Use /v1/voices to see all available voices',
-            }
-        ), 400
+        return (
+            jsonify(
+                {
+                    'error': {
+                        'message': f"Voice '{voice}' not found",
+                        'type': 'invalid_request_error',
+                        'code': 'unknown_voice',
+                    },
+                    # Helpful extras beyond the OpenAI envelope:
+                    'available_voices': available[:10],  # Limit to first 10
+                    'hint': 'Use /v1/voices to see all available voices',
+                }
+            ),
+            400,
+        )
 
     try:
         try:
@@ -349,10 +419,12 @@ def generate_speech():
 
     except ValueError as e:
         logger.warning(f'Voice loading failed: {e}')
-        return jsonify({'error': str(e)}), 400
+        return _openai_error(str(e), err_type='invalid_request_error', code='voice_load_failed'), 400
     except Exception as e:
         logger.exception('Generation failed')
-        return jsonify({'error': str(e)}), 500
+        return _openai_error(
+            f'Speech generation failed: {e}', err_type='server_error', code='generation_failed'
+        ), 500
 
 
 def _concatenate_audio_tensors(audio_tensors: list[torch.Tensor]) -> torch.Tensor:
@@ -369,11 +441,36 @@ def _concatenate_audio_tensors(audio_tensors: list[torch.Tensor]) -> torch.Tenso
     return combined.squeeze(0) if combined.shape[0] == 1 else combined
 
 
+def _silence_tensor(tts, gap_ms: int, channels: int = 1) -> torch.Tensor | None:
+    """Return a zero-filled silence tensor of ``gap_ms`` duration, or None if disabled.
+
+    This is the "breathing room" inserted between synthesized segments so long text
+    doesn't run together with no pause. Built as plain zeros (no model call), matching
+    the model's sample rate and channel count.
+    """
+    if gap_ms <= 0:
+        return None
+    n = max(1, int(round(tts.sample_rate * gap_ms / 1000.0)))
+    shape = (channels, n) if channels > 1 else (n,)
+    return torch.zeros(shape, dtype=torch.float32)
+
+
 def _synthesize_segments(tts, voice_state, segments: list[str]) -> torch.Tensor:
     audio_tensors = [tts.generate_audio(voice_state, segment) for segment in segments]
     if len(audio_tensors) == 1:
         return audio_tensors[0]
-    return _concatenate_audio_tensors(audio_tensors)
+
+    # Insert a short silence gap between segments (configurable; 0 disables).
+    gap_ms = current_app.config.get('SEGMENT_GAP_MS', 0) or 0
+    first_channels = audio_tensors[0].shape[0] if audio_tensors[0].dim() == 2 else 1
+    silence = _silence_tensor(tts, gap_ms, channels=first_channels)
+
+    combined: list[torch.Tensor] = []
+    for i, tensor in enumerate(audio_tensors):
+        if i > 0 and silence is not None:
+            combined.append(silence)
+        combined.append(tensor)
+    return _concatenate_audio_tensors(combined)
 
 
 def _generate_file(tts, voice_state, segments: list[str], fmt: str):
@@ -417,11 +514,19 @@ def _stream_audio(tts, voice_state, segments: list[str], fmt: str):
     def generate():
         total_chars = sum(len(segment) for segment in segments)
         logger.info(
-            'Starting streaming generation for %s chars across %s segment(s)',
+            'Starting streaming generation for %s chars across %d segment(s)',
             total_chars,
             len(segments),
         )
-        for segment in segments:
+        # Precompute the inter-segment silence once (configurable; 0 disables).
+        gap_ms = current_app.config.get('SEGMENT_GAP_MS', 0) or 0
+        silence_pcm = None
+        if gap_ms > 0:
+            silence_pcm = tensor_to_pcm_bytes(_silence_tensor(tts, gap_ms))
+
+        for i, segment in enumerate(segments):
+            if i > 0 and silence_pcm is not None:
+                yield silence_pcm
             stream = tts.generate_audio_stream(voice_state, segment)
             for chunk_tensor in stream:
                 yield tensor_to_pcm_bytes(chunk_tensor)

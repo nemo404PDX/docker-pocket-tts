@@ -3,7 +3,9 @@ TTS Service - handles model loading, voice management, and audio generation.
 """
 
 import os
+import threading
 import time
+from collections import OrderedDict
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -164,7 +166,10 @@ class TTSService:
 
     def __init__(self):
         self.model = None
-        self.voice_cache: dict = {}
+        # LRU-bounded voice cache (OrderedDict) so a client cycling through many
+        # custom voices can't grow memory without limit. Bounded by Config.MAX_CACHED_VOICES.
+        self.voice_cache: OrderedDict[str, dict] = OrderedDict()
+        self._voice_cache_lock = threading.Lock()
         self.voices_dir: str | None = None
         self._model_loaded = False
 
@@ -273,25 +278,38 @@ class TTSService:
         # Resolve the voice path
         resolved_key = self._resolve_voice_path(voice_id_or_path)
 
-        # Check cache
-        if resolved_key in self.voice_cache:
-            logger.debug(f'Using cached voice state for: {resolved_key}')
-            return self.voice_cache[resolved_key]
+        # Check cache (LRU-bounded; promote on hit).
+        max_cached = Config.MAX_CACHED_VOICES or 0
+        with self._voice_cache_lock:
+            if resolved_key in self.voice_cache:
+                self.voice_cache.move_to_end(resolved_key)
+                logger.debug(f'Using cached voice state for: {resolved_key}')
+                return self.voice_cache[resolved_key]
 
-        # Load voice
+        # Load voice (outside the lock so concurrent requests don't serialize on load).
         logger.info(f'Loading voice: {resolved_key}')
         t0 = time.time()
 
         try:
             state = self.model.get_state_for_audio_prompt(resolved_key)
-            self.voice_cache[resolved_key] = state
-            load_time = time.time() - t0
-            logger.info(f'Voice loaded in {load_time:.2f}s: {resolved_key}')
-            return state
-
         except Exception as e:
             logger.error(f"Failed to load voice '{voice_id_or_path}': {e}")
             raise ValueError(f"Voice '{voice_id_or_path}' could not be loaded: {e}") from e
+
+        with self._voice_cache_lock:
+            # Re-check in case a concurrent request already cached it.
+            if resolved_key in self.voice_cache:
+                self.voice_cache.move_to_end(resolved_key)
+                return self.voice_cache[resolved_key]
+            self.voice_cache[resolved_key] = state
+            # Evict least-recently-used entries beyond the bound (0 disables the cap).
+            while max_cached and len(self.voice_cache) > max_cached:
+                evicted, _ = self.voice_cache.popitem(last=False)
+                logger.debug('Evicted voice from cache (LRU): %s', evicted)
+
+        load_time = time.time() - t0
+        logger.info(f'Voice loaded in {load_time:.2f}s: {resolved_key}')
+        return state
 
     def _resolve_voice_path(self, voice_id_or_path: str) -> str:
         """

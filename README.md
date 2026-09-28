@@ -98,6 +98,17 @@ All settings come from environment variables with sensible defaults. In Docker, 
 | -------- | ------- | ----------- |
 | `POCKET_TTS_HOST` | `0.0.0.0` | Bind host (local runs; the Docker CMD binds `0.0.0.0`). |
 | `POCKET_TTS_PORT` | `49112` | Port. Must match the left side of the compose port mapping. |
+| `POCKET_TTS_THREADS` | `4` | Waitress worker threads (only used by `python server.py`, not the container path). |
+
+### Request hardening & security
+All optional — defaults preserve existing behavior, so nothing changes unless you set them.
+
+| Variable | Default | Description |
+| -------- | ------- | ----------- |
+| `POCKET_TTS_MAX_INPUT_CHARS` | `32000` | Reject synthesis input longer than this (HTTP 413). Set `0` to disable the cap. |
+| `POCKET_TTS_API_KEY` | — (unset) | When set, every route except `/health` and `/ready` requires `Authorization: Bearer <key>`. Leave unset for open local use. |
+| `POCKET_TTS_SEGMENT_GAP_MS` | `200` | Silence inserted between synthesized segments so long text doesn't run together (set `0` to disable). |
+| `POCKET_TTS_MAX_CACHED_VOICES` | `8` | Bound for the loaded-voice LRU cache (set `0` for unbounded). |
 
 ### Model
 | Variable | Default | Description |

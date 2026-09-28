@@ -63,12 +63,17 @@ Examples:
     # Enable streaming by default
     python server.py --stream
 
-Environment Variables:
+Environment Variables (full reference in README.md):
     POCKET_TTS_HOST         Server host (default: 0.0.0.0)
     POCKET_TTS_PORT         Server port (default: 49112)
-    POCKET_TTS_MODEL_PATH   Path to model file
+    POCKET_TTS_THREADS      Waitress worker threads (default: 4)
+    POCKET_TTS_MODEL_PATH   Path to model config file (.yaml) or variant name
     POCKET_TTS_VOICES_DIR   Path to voices directory
     POCKET_TTS_STREAM_DEFAULT Enable streaming by default
+    POCKET_TTS_MAX_INPUT_CHARS Reject synthesis input longer than this (default: 32000; 0 disables)
+    POCKET_TTS_API_KEY      Optional bearer token required on all routes except /health,/ready
+    POCKET_TTS_SEGMENT_GAP_MS Silence inserted between segments in ms (default: 200; 0 disables)
+    POCKET_TTS_MAX_CACHED_VOICES Bound for the loaded-voice LRU cache (default: 8; 0 unbounded)
     POCKET_TTS_TEXT_PREPROCESS_DEFAULT Enable text preprocessing by default
     POCKET_TTS_NORMALIZE_DEFAULT Enable normalization by default
     POCKET_TTS_SEGMENTATION_DEFAULT Default segmentation mode
@@ -178,6 +183,13 @@ Environment Variables:
         dest='log_level',
         help='Logging level',
     )
+    parser.add_argument(
+        '--threads',
+        type=int,
+        default=Config.THREADS,
+        dest='threads',
+        help=f'Waitress worker threads (default: {Config.THREADS})',
+    )
 
     return parser.parse_args()
 
@@ -226,7 +238,7 @@ def main():
         logger.info(f'Starting PocketTTS server on http://{args.host}:{args.port}')
         logger.info('Press Ctrl+C to stop')
 
-        serve(app, host=args.host, port=args.port, threads=4, url_scheme='http')
+        serve(app, host=args.host, port=args.port, threads=args.threads, url_scheme='http')
 
     except ImportError:
         logger.warning('Waitress not installed, falling back to Flask dev server')

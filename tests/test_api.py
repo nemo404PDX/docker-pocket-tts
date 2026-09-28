@@ -1,0 +1,162 @@
+"""Tests for the HTTP layer hardening in app/api/routes.py.
+
+Covers the P1 additions without loading the real model:
+  - optional bearer-token auth (POCKET_TTS_API_KEY) and its /health,/ready exemption
+  - input-length cap (POCKET_TTS_MAX_INPUT_CHARS) → 413
+  - OpenAI-shaped error envelope ({'error': {'message', 'type', 'code'}})
+  - inter-segment silence gap (POCKET_TTS_SEGMENT_GAP_MS) on the file path
+
+The Flask app is built via create_app() with config overrides; routes that don't need
+the model loaded are exercised directly, and _synthesize_segments/_silence_tensor are
+unit-tested against a fake TTS service.
+"""
+
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import torch
+
+from app import create_app
+from app.api import routes
+
+
+def make_app(**overrides):
+    return create_app(overrides or None)
+
+
+# ─────────────────────────────────────────────
+# Optional API key auth
+# ─────────────────────────────────────────────
+def test_no_auth_required_when_key_unset():
+    client = make_app().test_client()
+    # /v1/voices works without a model loaded (it only lists builtins + dir).
+    resp = client.get('/v1/voices')
+    assert resp.status_code == 200
+
+
+def test_missing_key_is_rejected_when_set():
+    client = make_app(API_KEY='secret').test_client()
+    resp = client.get('/v1/voices')
+    assert resp.status_code == 401
+    body = resp.get_json()
+    # OpenAI-shaped envelope.
+    assert body['error']['type'] == 'authentication_error'
+
+
+def test_correct_bearer_key_is_accepted():
+    client = make_app(API_KEY='secret').test_client()
+    resp = client.get('/v1/voices', headers={'Authorization': 'Bearer secret'})
+    assert resp.status_code == 200
+
+
+def test_wrong_key_is_rejected():
+    client = make_app(API_KEY='secret').test_client()
+    resp = client.get('/v1/voices', headers={'Authorization': 'Bearer nope'})
+    assert resp.status_code == 401
+
+
+def test_health_and_ready_are_exempt_from_auth():
+    client = make_app(API_KEY='secret').test_client()
+    # Model not loaded → these return 503, but crucially NOT 401.
+    for path in ('/health', '/ready'):
+        resp = client.get(path)
+        assert resp.status_code != 401
+
+
+# ─────────────────────────────────────────────
+# Input-length cap
+# ─────────────────────────────────────────────
+def test_oversized_input_is_rejected_with_413():
+    client = make_app(MAX_INPUT_CHARS=100).test_client()
+    resp = client.post('/tts', json={'input': 'x' * 200})
+    assert resp.status_code == 413
+    body = resp.get_json()
+    assert body['error']['code'] == 'input_too_long'
+
+
+def test_input_at_or_under_cap_is_not_rejected_by_length():
+    client = make_app(MAX_INPUT_CHARS=100).test_client()
+    # Exactly at the cap → passes the length check (fails later on model load, 500),
+    # so it must NOT be a 413.
+    resp = client.post('/tts', json={'input': 'x' * 100})
+    assert resp.status_code != 413
+
+
+def test_zero_cap_disables_the_limit():
+    client = make_app(MAX_INPUT_CHARS=0).test_client()
+    # Huge input is not rejected by length (fails later on model load, 500), so no 413.
+    resp = client.post('/tts', json={'input': 'x' * 10_000})
+    assert resp.status_code != 413
+
+
+# ─────────────────────────────────────────────
+# OpenAI-shaped error envelope
+# ─────────────────────────────────────────────
+def test_missing_body_returns_openai_envelope():
+    client = make_app().test_client()
+    resp = client.post('/tts', data='not json', content_type='text/plain')
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert set(body['error']) >= {'message', 'type'}
+
+
+def test_missing_input_returns_openai_envelope():
+    client = make_app().test_client()
+    # Non-empty dict with no 'input'/'text' → hits the missing-input branch (not
+    # the falsy "missing JSON body" branch).
+    resp = client.post('/tts', json={'voice': 'alba'})
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert body['error']['code'] == 'missing_input'
+
+
+# ─────────────────────────────────────────────
+# Inter-segment silence gap (file path)
+# ─────────────────────────────────────────────
+class _FakeTTS:
+    sample_rate = 24000
+
+    def generate_audio(self, voice_state, text):
+        # A fixed 100-sample "segment" per call.
+        return torch.full((1, 100), 0.5, dtype=torch.float32)
+
+
+def test_silence_tensor_disabled_returns_none():
+    assert routes._silence_tensor(_FakeTTS(), gap_ms=0) is None
+    assert routes._silence_tensor(_FakeTTS(), gap_ms=-5) is None
+
+
+def test_silence_tensor_length_matches_gap_ms():
+    # 200 ms at 24 kHz → 4800 samples.
+    silence = routes._silence_tensor(_FakeTTS(), gap_ms=200)
+    assert silence.shape[-1] == 4800
+    assert torch.all(silence == 0)
+
+
+def test_synthesize_segments_inserts_gap_between():
+    app = make_app(SEGMENT_GAP_MS=200)
+    with app.app_context():
+        out = routes._synthesize_segments(_FakeTTS(), {}, ['seg one', 'seg two'])
+    # 100 (seg1) + 4800 (gap) + 100 (seg2) = 5000 samples.
+    assert out.shape[-1] == 5000
+    # The gap region is silence; the segment regions are not.
+    assert torch.all(out[100:4900] == 0)
+    assert torch.any(out[:100] != 0)
+
+
+def test_synthesize_segments_no_gap_when_disabled():
+    app = make_app(SEGMENT_GAP_MS=0)
+    with app.app_context():
+        out = routes._synthesize_segments(_FakeTTS(), {}, ['seg one', 'seg two'])
+    # No gap → exactly 200 samples, no silence inserted.
+    assert out.shape[-1] == 200
+
+
+def test_synthesize_single_segment_has_no_gap():
+    app = make_app(SEGMENT_GAP_MS=200)
+    with app.app_context():
+        out = routes._synthesize_segments(_FakeTTS(), {}, ['only one'])
+    # A single segment is returned as-is (no leading/trailing silence).
+    assert out.shape[-1] == 100
