@@ -22,7 +22,8 @@ if [ -z "$USER_TOKEN" ]; then
   exit 1
 fi
 
-MODEL_ID="${2:-$MODEL_ID}"
+# Default to the model the app actually loads (see app/services/tts.py)
+MODEL_ID="${2:-${MODEL_ID:-kyutai/pocket-tts}}"
 if [ -z "$MODEL_ID" ]; then
   echo "MODEL_ID not provided"
   exit 1

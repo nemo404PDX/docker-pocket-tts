@@ -1,20 +1,27 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_ROOT="${SERVICE_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
-if [ -f "$SERVICE_ROOT/.venv/bin/activate" ]; then
-  source "$SERVICE_ROOT/.venv/bin/activate"
+# Locate the project venv python (POSIX or Windows layout)
+if [ -x "$SERVICE_ROOT/.venv/bin/python" ]; then
+  VENV_PY="$SERVICE_ROOT/.venv/bin/python"
+elif [ -x "$SERVICE_ROOT/.venv/Scripts/python.exe" ]; then
+  VENV_PY="$SERVICE_ROOT/.venv/Scripts/python.exe"
 else
-  echo ".venv/bin/activate not found at $SERVICE_ROOT/.venv/bin/activate"
+  echo "Error: no .venv found at $SERVICE_ROOT/.venv" >&2
+  echo "Create one first, e.g.: uv venv --python 3.11 \"$SERVICE_ROOT/.venv\"" >&2
   exit 1
 fi
 
-echo " "
-echo Installing /kyutai Pocket TTS...
-echo " "
+echo "Installing Pocket TTS + project dependencies into:"
+echo "  $VENV_PY"
+"$VENV_PY" -m pip install --upgrade pip setuptools wheel
+# cpu_requirements.txt includes the CPU-only torch index (matches the Docker image),
+# so this never pulls multi-GB CUDA wheels. dev_requirements adds pytest for tests/.
+"$VENV_PY" -m pip install \
+  -r "$SERVICE_ROOT/requirements/cpu_requirements.txt" \
+  -r "$SERVICE_ROOT/requirements/dev_requirements.txt"
 
-pip install --upgrade pip setuptools wheel
-
-pip install pocket-tts
+echo "Done."

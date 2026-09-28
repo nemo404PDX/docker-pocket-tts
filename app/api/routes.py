@@ -173,7 +173,12 @@ def ready():
 
 @api.route('/debug/normalize', methods=['POST'])
 def debug_normalize_endpoint():
-    """Debug endpoint: show exactly what preprocessing does to input text."""
+    """Debug endpoint: show exactly what preprocessing does to input text.
+
+    Disabled unless POCKET_TTS_DEBUG_LOG=true (it echoes request content back).
+    """
+    if not current_app.config.get('TTS_DEBUG_LOG'):
+        return jsonify({'error': 'debug endpoints disabled; set POCKET_TTS_DEBUG_LOG=true'}), 404
     from app.services.normalize import normalize_tts_text, segment_tts_text, TtsPipelineConfig
     data = request.get_json(silent=True) or {}
     text = data.get('input') or data.get('text', '')
