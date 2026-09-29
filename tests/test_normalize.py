@@ -395,9 +395,11 @@ def test_bare_hash_range_is_not_number_expanded():
 
 
 def test_mixed_alnum_username_is_not_number_expanded():
-    # "nemo404PDX" must not become "nemo four hundred four P D X".
+    # "nemo404PDX" resolves to a spoken form at protection time (not frozen whole —
+    # sentencepiece shreds a frozen one into subword garbage): words lowercase, acronyms
+    # spelled out, digits expanded: "nemo four hundred four P D X".
     out = normalize_tts_text('Repo nemo404PDX/docker-pocket-tts updated.')
-    assert 'nemo404PDX' in out
+    assert 'nemo' in out and 'four hundred four' in out and 'P D X' in out
 
 
 def test_pure_numbers_still_expand():
@@ -490,6 +492,59 @@ def test_snake_case_with_digits_keeps_them():
     assert 'three' in out or '3' in out
 
 
+def test_snake_case_eos_part_is_spelled_out():
+    # EOS is an English word (the spellchecker knows it) but inside an identifier it must be
+    # spelled out, not read as the word "eos" — whisper heard "iOS"/"Essex" from that.
+    out = normalize_tts_text('FRAMES_AFTER_EOS=6 set.')
+    assert 'E O S' in out
+
+
+def test_assignment_equals_is_read_as_equals():
+    # A raw "=" reaching sentencepiece is an unknown token and the model emits noise around
+    # it (whisper heard "Essex"). Assignment/comparison equals read as "equals"; the value
+    # still flows through number expansion.
+    out = normalize_tts_text('FRAMES_AFTER_EOS=6 set.')
+    assert 'equals' in out and 'six' in out
+
+
+def test_double_equals_is_read_as_equals():
+    out = normalize_tts_text('If a==b then retry.')
+    assert 'a equals b' in out or ('equals' in out)
+
+
+def test_mixed_alnum_model_name_resolves_to_spoken_form():
+    # llama3 / gpt2 style tokens resolve at protection time (words lowercase, digits intact
+    # for number expansion) instead of being frozen whole and shredded by sentencepiece.
+    out = normalize_tts_text('We run llama3 locally.')
+    assert 'llama' in out and ('three' in out or '3' in out)
+
+
+def test_repo_path_slash_is_read_as_slash():
+    # A raw "/" reaching sentencepiece is <0x2F> (unknown control token) — the model emits
+    # noise around it. Slashes between words read as "slash"; both sides still resolve.
+    out = normalize_tts_text('The repo is nemo404PDX/docker-pocket-tts.')
+    assert 'slash' in out and 'Docker Pocket T T S' in out
+
+
+def test_and_or_slash_is_read_as_slash():
+    out = normalize_tts_text('Use the cache or/and the fallback.')
+    assert 'or slash and' in out
+
+
+def test_bare_url_stays_intact():
+    # A bare URL is protected whole — no "slash" injected, digits untouched.
+    out = normalize_tts_text('See https://example.com/path for docs.')
+    assert 'https://example.com/path' in out
+    assert 'slash' not in out
+
+
+def test_unix_path_stays_intact():
+    # Frozen unix paths keep their slashes (no "slash" injection).
+    out = normalize_tts_text('The file is at /tmp/a/b.txt.')
+    assert '/tmp/a/b.txt' in out
+    assert 'slash' not in out
+
+
 # ─────────────────────────────────────────────
 # Product name (pocket-tts) spoken form
 # ─────────────────────────────────────────────
@@ -516,9 +571,10 @@ def test_product_name_docker_prefixed_reads_as_docker_pocket_tts():
 def test_product_name_in_path_is_spoken():
     # Inside a repo path the product name is still spoken — that IS its own name being
     # referenced ("nemo404PDX/docker-pocket-tts" -> ".../Docker Pocket T T S"). The docker
-    # prefix must be consumed as one unit (no dangling "docker-").
+    # prefix must be consumed as one unit (no dangling "docker-"), and the mixed-alnum
+    # username resolves to a spoken form rather than staying frozen.
     out = normalize_tts_text('Clone nemo404PDX/docker-pocket-tts now.')
-    assert 'nemo404PDX' in out
+    assert 'nemo' in out and 'four hundred four' in out and 'P D X' in out
     assert 'Docker Pocket T T S' in out
     assert 'text to speech' not in out
 

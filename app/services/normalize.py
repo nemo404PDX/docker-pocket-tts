@@ -94,6 +94,10 @@ _BARE_HASH_RE = re.compile(r'\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{5,12}\b
 _MIXED_ALNUM_RE = re.compile(r'\b[A-Za-z]+\d[A-Za-z0-9]*\b')
 _VERSION_RE = re.compile(r'\bv\d+\.\d+(?:[\w.]+)?\b', re.IGNORECASE)
 _UNIX_PATH_RE = re.compile(r'(?<!\w)/(?:[a-z0-9._-]+/)*[a-z0-9._-]+', re.IGNORECASE)
+# Bare URLs (https://example.com/path). Protected whole so the slash-connector pass never
+# injects "slash" into them and number expansion can't touch their digits. Markdown link
+# targets are already stripped by _strip_markdown_syntax; this catches bare URLs in prose.
+_URL_RE = re.compile(r'https?://[^\s<>"\')\]]+', re.IGNORECASE)
 _INLINE_WHITESPACE_RE = re.compile(r'[^\S\n]{2,}')
 _NEWLINE_PADDING_RE = re.compile(r'[^\S\n]*\n[^\S\n]*')
 _SENTENCE_RE = re.compile(r'[^.!?]+[.!?]+(?:["\')\]]+)?|[^.!?]+$')
@@ -197,6 +201,10 @@ ACRONYM_EXPANSIONS: dict[str, str] = {
     'KPI': 'K P I', 'ROI': 'R O I', 'SLA': 'S L A', 'SLO': 'S L O',
     'TTS': 'text to speech', 'STT': 'speech to text', 'LLM': 'large language model',
     'NLP': 'natural language processing', 'ML': 'machine learning',
+    # Short all-caps acronyms that are NOT in the spellchecker/CMU dictionaries, so the
+    # generic passes would read them as a word ("eos" -> whisper hears "iOS"/"Essex").
+    # Spelled out letter by letter instead.
+    'EOS': 'E O S', 'EOF': 'E O F', 'EOL': 'E O L',
     # Context-dependent: real English words in the dictionary, but ALL-CAPS usage is a
     # time/era marker that must be spelled out ("nine AM" -> "nine A M", not "nine am").
     'AM': 'A M', 'PM': 'P M', 'AD': 'A D', 'BC': 'B C',
@@ -414,8 +422,16 @@ def _normalize_internal(
     # and the model emits noise around it, so read it as "plus". Markdown list bullets
     # ("+ item") were already stripped by _strip_markdown_syntax.
     protected_text = _expand_plus_connectors(protected_text)
+    # Assignment/comparison equals ("FRAMES_AFTER_EOS=6", "a==b") — same rationale as plus:
+    # a raw "=" is an unknown sentencepiece token and the model emits noise around it.
+    protected_text = _expand_equals_signs(protected_text)
     if config.run_number_expansion:
         protected_text = _NUMBER_PREPROCESSOR.process(protected_text)
+    # Slashes between LETTERS (repo paths, "and/or") — a raw "/" reaches sentencepiece as
+    # <0x2F> (unknown control token) and the model emits noise around it. Runs AFTER number
+    # expansion so digit pairs ("1/2", dates) are already fractions; frozen tokens (unix
+    # paths, URLs, filenames) keep their slashes because they were protected earlier.
+    protected_text = _expand_slash_connectors(protected_text)
     protected_text = _protect_punctuation(protected_text)
     protected_text = _restore_tokens(protected_text, token_map)
     steps.append(('numberNorm', protected_text))
@@ -551,10 +567,22 @@ def _protect_tokens(text: str) -> tuple[str, dict[str, str]]:
     protect(_PRODUCT_NAME_RE, _product_name_replacement)
     protect(_INLINE_CODE_RE, lambda m: m.group(1))
     protect(_VERSION_RE)
+    # Bare URLs before unix paths: otherwise the path part would be protected separately
+    # (leaving "https://" + frozen tail) and the slash-connector pass would inject "slash".
+    def _url_value(match: re.Match[str]) -> str:
+        # Trailing sentence punctuation is not part of the URL.
+        return match.group(0).rstrip('.,;:!?)')
+
+    protect(_URL_RE, _url_value)
     protect(_UNIX_PATH_RE)
     protect(_FILENAME_RE)
     protect(_BARE_HASH_RE, skip_camel=True)
-    protect(_MIXED_ALNUM_RE, skip_camel=True)
+    # Mixed letters+digits (nemo404PDX, llama3): RESOLVE to a spoken form at protection
+    # time instead of freezing the raw token — sentencepiece shreds a frozen one into
+    # subword garbage ("NEMO 4DD"). Parts resolve like the camel pass; digits stay intact
+    # for number expansion. Tokens with an embedded acronym (HTML5) are left unprotected
+    # (skip_camel) so _expand_acronyms decomposes them instead.
+    protect(_MIXED_ALNUM_RE, _resolve_mixed_alnum, skip_camel=True)
     return text, token_map
 
 
@@ -670,6 +698,25 @@ def _decompose_camel_acronym(match: re.Match[str]) -> str:
     return ' '.join(_resolve_acronym_part(part) for part in parts)
 
 
+def _resolve_mixed_alnum(match: re.Match[str]) -> str:
+    """Spoken form of a mixed letters+digits token (nemo404PDX, llama3).
+
+    Split at case/digit boundaries and resolve each part with the same rules as the
+    camel pass — words lowercase ("llama"), acronyms spelled out ("PDX" -> "P D X"),
+    digits expanded (the resolved value is frozen inside a protection token, so the
+    number-expansion pass never sees it). Without this the token is frozen whole and
+    sentencepiece shreds it into subword garbage (whisper heard "NEMO 4DD").
+    """
+    parts = re.findall(r'[A-Z]+(?![a-z])|[A-Za-z]+|\d+', match.group(0))
+    resolved = []
+    for part in parts:
+        if part.isdigit():
+            resolved.append(_NUMBER_PREPROCESSOR.process(part))
+        else:
+            resolved.append(_resolve_acronym_part(part))
+    return ' '.join(resolved)
+
+
 def _resolve_snake_case(match: re.Match[str]) -> str:
     """Spoken form of a SCREAMING_SNAKE_CASE identifier (FALLBACK_UNKNOWN_VOICE).
 
@@ -684,9 +731,20 @@ def _resolve_snake_case(match: re.Match[str]) -> str:
         if not part:
             continue
         if part.isdigit():
-            resolved.append(part)
-        elif part.isupper() and len(part) >= 2 and (_is_english_word(part) or _is_word_acronym(part)):
-            resolved.append(part.lower())
+            # Expand now: the resolved value is frozen inside a protection token, so the
+            # number-expansion pass never sees it ("MAX_RETRIES_3" -> "max retries three").
+            resolved.append(_NUMBER_PREPROCESSOR.process(part))
+        elif part.isupper() and len(part) >= 2:
+            # Letter-spelled curated forms first ("EOS" -> "E O S"). Phrase expansions are
+            # prose-only: inside an identifier TTS stays letter-spelled ("pocket T T S max
+            # frames"), never "text to speech". Then real words lowercase, then spell out.
+            spoken = ACRONYM_EXPANSIONS.get(part)
+            if spoken and re.fullmatch(r'[A-Z]( [A-Z])*', spoken):
+                resolved.append(spoken)
+            elif _is_english_word(part) or _is_word_acronym(part):
+                resolved.append(part.lower())
+            else:
+                resolved.append(' '.join(part))
         else:
             resolved.append(' '.join(part))
     return ' '.join(resolved)
@@ -819,6 +877,33 @@ _PLUS_CONNECTOR_RE = re.compile(r'(\w)\s*\+\s*(?=\w)')
 
 def _expand_plus_connectors(text: str) -> str:
     return _PLUS_CONNECTOR_RE.sub(lambda m: f"{m.group(1)} plus ", text)
+
+
+# Assignment/comparison equals between operands ("FRAMES_AFTER_EOS=6", "a=b"). A raw "="
+# reaching sentencepiece is an unknown token and the model emits noise around it (whisper
+# heard "Essex"), so read it as "equals". Runs on PROTECTED text: a "=" inside a frozen
+# token (inline code, path) is never touched. The left operand may be a protected-token
+# terminator (\x03) because SCREAMING_SNAKE_CASE identifiers are already resolved by the
+# time this runs ("FRAMES_AFTER_EOS=6" -> "\x02PROT..\x03=6"). Digits/words on the right
+# still flow through number expansion afterwards.
+_EQUALS_SIGN_RE = re.compile(r'([\w\x03])\s*={1,2}\s*(?=[\w\x02])')
+
+
+def _expand_equals_signs(text: str) -> str:
+    return _EQUALS_SIGN_RE.sub(lambda m: f"{m.group(1)} equals ", text)
+
+
+# A slash used as a separator between two words ("nemo404PDX/docker-pocket-tts" — repo
+# paths, "and/or"). Runs on PROTECTED text so slashes inside frozen URLs/paths/filenames
+# are never touched. Without this the raw "/" reaches sentencepiece as <0x2F> (an unknown
+# control token) and the model emits noise around it (whisper heard "NEMO 400-4. P.D.").
+# Operands may be protection-token boundaries (\x03/\x02) because both sides of a repo-path
+# slash are usually frozen tokens ("...\x03/\x02...").
+_SLASH_CONNECTOR_RE = re.compile(r'([\w\x03])\s*/\s*(?=[\w\x02])')
+
+
+def _expand_slash_connectors(text: str) -> str:
+    return _SLASH_CONNECTOR_RE.sub(lambda m: f"{m.group(1)} slash ", text)
 
 
 def _protect_punctuation(text: str) -> str:
