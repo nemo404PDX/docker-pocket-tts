@@ -187,23 +187,59 @@ def test_silence_tensor_length_matches_gap_ms():
     assert torch.all(silence == 0)
 
 
-def test_synthesize_segments_inserts_gap_between():
+def test_synthesize_segments_sentence_boundary_gets_full_gap():
     app = make_app(SEGMENT_GAP_MS=200)
     with app.app_context():
-        out = routes._synthesize_segments(_FakeTTS(), {}, ['seg one', 'seg two'])
-    # 100 (seg1) + 4800 (gap) + 100 (seg2) = 5000 samples.
+        out = routes._synthesize_segments(_FakeTTS(), {}, ['First sentence.', 'Second one.'])
+    # 100 (seg1) + 4800 (full gap, seg1 ends a sentence) + 100 (seg2) = 5000 samples.
     assert out.shape[-1] == 5000
     # The gap region is silence; the segment regions are not.
     assert torch.all(out[100:4900] == 0)
     assert torch.any(out[:100] != 0)
 
 
+def test_synthesize_segments_mid_sentence_gets_small_seam():
+    app = make_app(SEGMENT_GAP_MS=200, SEGMENT_SEAM_MS=30)
+    with app.app_context():
+        out = routes._synthesize_segments(_FakeTTS(), {}, ['your code', 'is delayed'])
+    # 100 (seg1) + 720 (30ms seam — mid-sentence split, not a sentence boundary) + 100.
+    assert out.shape[-1] == 920
+    assert torch.all(out[100:820] == 0)
+
+
+def test_synthesize_segments_seam_capped_at_full_gap():
+    # A seam larger than the full gap is clamped to the full gap, so a sentence boundary
+    # never has less silence than a mid-clause split.
+    app = make_app(SEGMENT_GAP_MS=20, SEGMENT_SEAM_MS=30)
+    with app.app_context():
+        out = routes._synthesize_segments(_FakeTTS(), {}, ['your code', 'is delayed'])
+    # 100 + 480 (20ms, clamped from 30) + 100.
+    assert out.shape[-1] == 680
+
+
 def test_synthesize_segments_no_gap_when_disabled():
     app = make_app(SEGMENT_GAP_MS=0)
     with app.app_context():
-        out = routes._synthesize_segments(_FakeTTS(), {}, ['seg one', 'seg two'])
-    # No gap → exactly 200 samples, no silence inserted.
+        out = routes._synthesize_segments(_FakeTTS(), {}, ['First sentence.', 'Second one.'])
+    # No gap → exactly 200 samples, no silence inserted (seam collapses to 0 too).
     assert out.shape[-1] == 200
+
+
+def test_boundary_gap_ms_sentence_final():
+    app = make_app(SEGMENT_GAP_MS=200, SEGMENT_SEAM_MS=30)
+    with app.app_context():
+        assert routes._boundary_gap_ms('First sentence.') == 200
+        assert routes._boundary_gap_ms('Really?') == 200
+        # Trailing quote/bracket is ignored when detecting the boundary.
+        assert routes._boundary_gap_ms('He said "stop."') == 200
+
+
+def test_boundary_gap_ms_mid_sentence():
+    app = make_app(SEGMENT_GAP_MS=200, SEGMENT_SEAM_MS=30)
+    with app.app_context():
+        assert routes._boundary_gap_ms('your code') == 30
+        # Empty / whitespace-only segment → seam (no boundary).
+        assert routes._boundary_gap_ms('   ') == 30
 
 
 def test_synthesize_single_segment_has_no_gap():

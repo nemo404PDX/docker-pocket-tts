@@ -53,6 +53,7 @@ def create_app(config_overrides: dict = None) -> 'Flask':
     app.config['MAX_INPUT_CHARS'] = Config.MAX_INPUT_CHARS
     app.config['API_KEY'] = Config.API_KEY
     app.config['SEGMENT_GAP_MS'] = Config.SEGMENT_GAP_MS
+    app.config['SEGMENT_SEAM_MS'] = Config.SEGMENT_SEAM_MS
     app.config['DEFAULT_VOICE'] = Config.DEFAULT_VOICE
     app.config['FALLBACK_UNKNOWN_VOICE'] = Config.FALLBACK_UNKNOWN_VOICE
 

@@ -72,7 +72,8 @@ Environment Variables (full reference in README.md):
     POCKET_TTS_STREAM_DEFAULT Enable streaming by default
     POCKET_TTS_MAX_INPUT_CHARS Reject synthesis input longer than this (default: 32000; 0 disables)
     POCKET_TTS_API_KEY      Optional bearer token required on all routes except /health,/ready
-    POCKET_TTS_SEGMENT_GAP_MS Silence inserted between segments in ms (default: 200; 0 disables)
+    POCKET_TTS_SEGMENT_GAP_MS Silence between segments at SENTENCE boundaries in ms (default: 200; 0 disables)
+    POCKET_TTS_SEGMENT_SEAM_MS Silence between MID-SENTENCE fragments in ms (default: 30; 0 = no seam)
     POCKET_TTS_MAX_CACHED_VOICES Bound for the loaded-voice LRU cache (default: 8; 0 unbounded)
     POCKET_TTS_TEXT_PREPROCESS_DEFAULT Enable text preprocessing by default
     POCKET_TTS_NORMALIZE_DEFAULT Enable normalization by default

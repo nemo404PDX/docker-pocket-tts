@@ -491,20 +491,40 @@ def _silence_tensor(tts, gap_ms: int, channels: int = 1) -> torch.Tensor | None:
     return torch.zeros(shape, dtype=torch.float32)
 
 
+def _boundary_gap_ms(segment: str) -> int:
+    """Silence to insert AFTER ``segment`` before the next one is synthesized.
+
+    A segment that ends a sentence (., !, ? — ignoring trailing quotes/brackets) gets
+    the full SEGMENT_GAP_MS "breath". A mid-sentence fragment (split by the char/token
+    caps rather than at a real boundary) gets the smaller SEGMENT_SEAM_MS so long clauses
+    flow as one continuous phrase instead of getting an audible pause in the middle
+    ("...your [pause] code"). The seam is capped at the full gap so a sentence boundary
+    never has less silence than a mid-clause split, and both collapse to 0 when the full
+    gap is disabled (SEGMENT_GAP_MS=0).
+    """
+    gap_ms = current_app.config.get('SEGMENT_GAP_MS', 0) or 0
+    seam_ms = current_app.config.get('SEGMENT_SEAM_MS', 0) or 0
+    # Ignore trailing quotes/brackets when detecting the boundary (He said "stop." → stop).
+    stripped = segment.rstrip().rstrip("\"')]").strip()
+    if stripped and stripped[-1] in '.!?':
+        return gap_ms
+    return min(seam_ms, gap_ms)
+
+
 def _synthesize_segments(tts, voice_state, segments: list[str]) -> torch.Tensor:
     audio_tensors = [tts.generate_audio(voice_state, segment) for segment in segments]
     if len(audio_tensors) == 1:
         return audio_tensors[0]
 
-    # Insert a short silence gap between segments (configurable; 0 disables).
-    gap_ms = current_app.config.get('SEGMENT_GAP_MS', 0) or 0
+    # Insert boundary-aware silence between segments (see _boundary_gap_ms): a full breath
+    # at sentence-final boundaries, a small seam between mid-sentence fragments.
     first_channels = audio_tensors[0].shape[0] if audio_tensors[0].dim() == 2 else 1
-    silence = _silence_tensor(tts, gap_ms, channels=first_channels)
-
     combined: list[torch.Tensor] = []
     for i, tensor in enumerate(audio_tensors):
-        if i > 0 and silence is not None:
-            combined.append(silence)
+        if i > 0:
+            silence = _silence_tensor(tts, _boundary_gap_ms(segments[i - 1]), channels=first_channels)
+            if silence is not None:
+                combined.append(silence)
         combined.append(tensor)
     return _concatenate_audio_tensors(combined)
 
@@ -554,15 +574,22 @@ def _stream_audio(tts, voice_state, segments: list[str], fmt: str):
             total_chars,
             len(segments),
         )
-        # Precompute the inter-segment silence once (configurable; 0 disables).
-        gap_ms = current_app.config.get('SEGMENT_GAP_MS', 0) or 0
-        silence_pcm = None
-        if gap_ms > 0:
-            silence_pcm = tensor_to_pcm_bytes(_silence_tensor(tts, gap_ms))
+        # Insert boundary-aware silence between segments (see _boundary_gap_ms): a full
+        # breath at sentence-final boundaries, a small seam between mid-sentence fragments.
+        silence_cache: dict[int, bytes] = {}
+
+        def _silence_for(ms: int) -> bytes | None:
+            if ms <= 0:
+                return None
+            if ms not in silence_cache:
+                silence_cache[ms] = tensor_to_pcm_bytes(_silence_tensor(tts, ms))
+            return silence_cache[ms]
 
         for i, segment in enumerate(segments):
-            if i > 0 and silence_pcm is not None:
-                yield silence_pcm
+            if i > 0:
+                silence_pcm = _silence_for(_boundary_gap_ms(segments[i - 1]))
+                if silence_pcm is not None:
+                    yield silence_pcm
             stream = tts.generate_audio_stream(voice_state, segment)
             for chunk_tensor in stream:
                 yield tensor_to_pcm_bytes(chunk_tensor)

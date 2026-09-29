@@ -264,6 +264,11 @@ class TtsPipelineConfig:
     # Hard per-segment token cap (pocket-tts's 50-token chunk limit). None disables the
     # tokenizer-based pass and relies on max_segment_chars alone.
     max_segment_tokens: int | None = MAX_SEGMENT_TOKENS
+    # Expand contractions ("isn't" -> "is not"). pocket-tts reads raw contractions fine —
+    # the tokenizer keeps them as natural tokens (▁isn' t) — so expansion is purely a
+    # stylistic choice that makes speech sound formal/robotic ("is not it"). Off by default
+    # for natural, conversational delivery; enable to force full forms.
+    expand_contractions: bool = False
     run_number_expansion: bool = True
     drop_source_links_section: bool = False
     # Regex of client markers to strip (whole line removed). None → default pattern.
@@ -362,7 +367,8 @@ def _normalize_internal(
     steps.append(('markdownCleanup', protected_text))
 
     protected_text = _normalize_apostrophes(protected_text)
-    protected_text = _expand_contractions(protected_text)
+    if config.expand_contractions:
+        protected_text = _expand_contractions(protected_text)
     protected_text = _expand_abbreviations(protected_text)
     protected_text = _expand_acronyms(protected_text)
     protected_text = _normalize_dot_prefixed_tokens(protected_text)

@@ -113,8 +113,17 @@ class Config:
 
     # Silence inserted between synthesized segments (ms). Long text is split into
     # segments and concatenated; without a gap the sentences run together with no
-    # breathing room. 0 disables the gap entirely.
+    # breathing room. 0 disables the gap entirely. This is the FULL gap, applied only at
+    # sentence-final boundaries (a segment ending in . ! ?) — see SEGMENT_SEAM_MS for the
+    # smaller seam used between mid-sentence fragments so long clauses don't get a full
+    # "breath" landing inside a phrase.
     SEGMENT_GAP_MS = int(os.environ.get('POCKET_TTS_SEGMENT_GAP_MS', '200'))
+
+    # Silence inserted between MID-SENTENCE fragments (ms) — i.e. where a single sentence
+    # was split by the char/token caps rather than at a real sentence boundary. Kept small
+    # so long clauses flow as one continuous phrase instead of getting an audible pause in
+    # the middle ("...your [pause] code"). 0 concatenates fragments with no seam at all.
+    SEGMENT_SEAM_MS = int(os.environ.get('POCKET_TTS_SEGMENT_SEAM_MS', '30'))
 
     # Extra decoder frames to generate after pocket-tts detects end-of-speech (1 frame =
     # 80 ms at 12.5 Hz). Empty/unset uses pocket-tts's built-in guess (~3 frames), which is

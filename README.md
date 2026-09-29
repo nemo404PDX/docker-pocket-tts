@@ -113,7 +113,8 @@ All optional — defaults preserve existing behavior, so nothing changes unless 
 | -------- | ------- | ----------- |
 | `POCKET_TTS_MAX_INPUT_CHARS` | `32000` | Reject synthesis input longer than this (HTTP 413). Set `0` to disable the cap. |
 | `POCKET_TTS_API_KEY` | — (unset) | When set, every route except `/health` and `/ready` requires `Authorization: Bearer <key>`. Leave unset for open local use. |
-| `POCKET_TTS_SEGMENT_GAP_MS` | `200` | Silence inserted between synthesized segments so long text doesn't run together (set `0` to disable). |
+| `POCKET_TTS_SEGMENT_GAP_MS` | `200` | Silence inserted between segments at **sentence** boundaries (a segment ending in `.`, `!`, or `?`) so long text doesn't run together. Set `0` to disable all inter-segment silence. |
+| `POCKET_TTS_SEGMENT_SEAM_MS` | `30` | Silence inserted between **mid-sentence** fragments (where a single sentence was split by the length/token caps). Kept small so long clauses flow as one phrase instead of getting an audible pause in the middle. Capped at `SEGMENT_GAP_MS`; set `0` for no seam. |
 | `POCKET_TTS_MAX_CACHED_VOICES` | `8` | Bound for the loaded-voice LRU cache (set `0` for unbounded). |
 | `POCKET_TTS_FRAMES_AFTER_EOS` | — (unset) | Extra decoder frames after end-of-speech (1 frame = 80 ms). Unset uses pocket-tts's built-in guess (~3 frames), which is short enough that some voices clip the final consonant/syllable. Set e.g. `6` for a longer tail; `0` disables it. Generation is stochastic, so treat this as a per-voice tuning lever rather than a guaranteed fix. |
 

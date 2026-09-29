@@ -13,12 +13,21 @@ from app.services.normalize import (
 )
 
 
-def test_expands_safe_contractions():
-    assert normalize_tts_text("don't stop") == 'do not stop'
+def test_keeps_contractions_by_default():
+    # pocket-tts reads raw contractions natively (the tokenizer keeps them as clean tokens),
+    # so expansion is off by default for natural, conversational delivery.
+    assert normalize_tts_text("don't stop") == "don't stop"
+
+
+def test_expands_contractions_when_enabled():
+    config = TtsPipelineConfig(expand_contractions=True)
+    assert normalize_tts_text("don't stop", config) == 'do not stop'
+    assert normalize_tts_text("isn't it", config) == 'is not it'
 
 
 def test_normalizes_curly_apostrophes():
-    assert normalize_tts_text("It's fine") == 'It is fine'
+    # Curly apostrophes are normalized to straight ones regardless of expansion.
+    assert normalize_tts_text("It's fine") == "It's fine"
 
 
 def test_strips_basic_markdown():
@@ -168,6 +177,7 @@ def test_default_cap_keeps_segments_token_safe():
 
 
 def test_debug_output_contains_stage_trace():
+    # Contraction expansion is off by default, so "don't" survives intact.
     result = debug_normalize("Use **bold** and don't panic.")
     stages = [stage for stage, _output in result.steps]
     assert stages == [
@@ -177,6 +187,12 @@ def test_debug_output_contains_stage_trace():
         'numberNorm',
         'whitespaceCleanup',
     ]
+    assert result.normalized == "Use bold and don't panic."
+
+
+def test_debug_output_expands_contractions_when_enabled():
+    config = TtsPipelineConfig(expand_contractions=True)
+    result = debug_normalize("Use **bold** and don't panic.", config)
     assert result.normalized == 'Use bold and do not panic.'
 
 
