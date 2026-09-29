@@ -31,9 +31,15 @@ if [ -z "$HF_CLI" ]; then
   exit 1
 fi
 
+# Token resolution mirrors app/services/tts.py::_load_hf_token(): explicit arg, then
+# HF_TOKEN env (set by .env), then the file at HF_TOKEN_FILE. This lets local dev use the
+# same token-file convention as Docker without putting a literal secret in .env.
 USER_TOKEN="${1:-$HF_TOKEN}"
+if [ -z "$USER_TOKEN" ] && [ -n "${HF_TOKEN_FILE:-}" ] && [ -f "$HF_TOKEN_FILE" ]; then
+  USER_TOKEN="$(tr -d '[:space:]' < "$HF_TOKEN_FILE")"
+fi
 if [ -z "$USER_TOKEN" ]; then
-  echo "USER_TOKEN not provided (pass it as \$1 or set HF_TOKEN in .env)"
+  echo "USER_TOKEN not provided (pass it as \$1, set HF_TOKEN in .env, or point HF_TOKEN_FILE at a token file)" >&2
   exit 1
 fi
 
