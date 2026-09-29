@@ -194,6 +194,9 @@ ACRONYM_EXPANSIONS: dict[str, str] = {
     'KPI': 'K P I', 'ROI': 'R O I', 'SLA': 'S L A', 'SLO': 'S L O',
     'TTS': 'text to speech', 'STT': 'speech to text', 'LLM': 'large language model',
     'NLP': 'natural language processing', 'ML': 'machine learning',
+    # Context-dependent: real English words in the dictionary, but ALL-CAPS usage is a
+    # time/era marker that must be spelled out ("nine AM" -> "nine A M", not "nine am").
+    'AM': 'A M', 'PM': 'P M', 'AD': 'A D', 'BC': 'B C',
 }
 
 PUNCT_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (

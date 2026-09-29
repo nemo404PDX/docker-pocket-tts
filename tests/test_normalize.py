@@ -280,6 +280,18 @@ def test_all_caps_common_word_is_lowercased_fully():
     assert normalize_tts_text('NEVER do that') == 'never do that'
 
 
+def test_time_markers_are_spelled_out_not_read_as_words():
+    # AM/PM (and AD/BC) ARE real English words in the dictionary, but ALL-CAPS usage is a
+    # time/era marker and must be spelled out — "nine AM" -> "nine A M", not "nine am".
+    assert normalize_tts_text('See you at nine AM.') == 'See you at nine A M.'
+    assert normalize_tts_text('Call me after five PM.') == 'Call me after five P M.'
+
+
+def test_lowercase_time_marker_is_left_alone():
+    # Lowercase "am" is the verb — untouched (the expansion is case-sensitive).
+    assert normalize_tts_text('I am fine') == 'I am fine'
+
+
 def test_unknown_all_caps_token_is_spelled_out():
     # True acronyms/initialisms not in the curated list are spelled out letter by letter.
     assert normalize_tts_text('NASA launched a probe.') == 'N A S A launched a probe.'
