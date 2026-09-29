@@ -563,3 +563,34 @@ def test_non_hex_alnum_token_is_not_a_hash():
     # A token with non-hex letters (g-z) is NOT a git hash — it must not be frozen.
     out = normalize_tts_text('The word master stays.')
     assert 'master' in out
+
+
+def test_plus_connector_glued_reads_as_plus():
+    # "token+download" used to reach sentencepiece with the raw "+" (unknown token -> noise);
+    # it now reads as "token plus download".
+    out = normalize_tts_text('the token+download path was broken')
+    assert 'token plus download' in out
+
+
+def test_plus_connector_spaced_reads_as_plus():
+    out = normalize_tts_text('use token + download for this')
+    assert 'token plus download' in out
+
+
+def test_plus_between_numbers_expands_both_sides():
+    # The connector runs before number expansion, so "2+2" -> "two plus two".
+    out = normalize_tts_text('so 2+2 is four.')
+    assert 'two plus two' in out
+
+
+def test_cpp_double_plus_is_left_alone():
+    # C++ has no word char after the second "+", so it stays as-is (sentencepiece handles it).
+    out = normalize_tts_text('C++ and Rust are languages')
+    assert 'C++' in out
+    assert 'plus' not in out
+
+
+def test_plus_inside_protected_filename_is_untouched():
+    # A "+" inside a protected filename token must not become "plus".
+    out = normalize_tts_text('save it as my+file.txt now')
+    assert 'my+file.txt' in out

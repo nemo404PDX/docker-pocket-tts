@@ -407,6 +407,13 @@ def _normalize_internal(
     protected_text = _expand_abbreviations(protected_text)
     protected_text = _expand_acronyms(protected_text)
     protected_text = _normalize_dot_prefixed_tokens(protected_text)
+    # Plus connectors ("token+download", "2 + 2") run on the PROTECTED text — before number
+    # expansion, after every protection pass — so a "+" inside a frozen token (version, path,
+    # filename) is never touched and digits adjacent to the connector still get expanded
+    # ("2+2" -> "two plus two"). A raw "+" reaching sentencepiece becomes an unknown token
+    # and the model emits noise around it, so read it as "plus". Markdown list bullets
+    # ("+ item") were already stripped by _strip_markdown_syntax.
+    protected_text = _expand_plus_connectors(protected_text)
     if config.run_number_expansion:
         protected_text = _NUMBER_PREPROCESSOR.process(protected_text)
     protected_text = _protect_punctuation(protected_text)
@@ -801,6 +808,17 @@ def _normalize_dot_prefixed_tokens(text: str) -> str:
         text,
         flags=re.IGNORECASE,
     )
+
+
+# A plus sign used as a connector between two words ("token+download", "2 + 2"). Runs after
+# token protection/restoration so URLs and filenames are already frozen — only standalone
+# connectors remain. Without this the raw "+" reaches sentencepiece, which shreds it into
+# unknown tokens and the model emits noise around it.
+_PLUS_CONNECTOR_RE = re.compile(r'(\w)\s*\+\s*(?=\w)')
+
+
+def _expand_plus_connectors(text: str) -> str:
+    return _PLUS_CONNECTOR_RE.sub(lambda m: f"{m.group(1)} plus ", text)
 
 
 def _protect_punctuation(text: str) -> str:
