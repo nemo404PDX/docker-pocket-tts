@@ -538,10 +538,14 @@ def _expand_acronyms(text: str) -> str:
          ("SLOW" -> "slow", sentence-initial capital preserved). Without this, the
          sentencepiece tokenizer splits all-caps words into single letters and the model
          spells them out ("S L O W").
-      3. True acronym/initialism -> spelled out letter by letter ("NASA" -> "N A S A").
+      3. Word-acronym (CMU Pronouncing Dictionary) -> lowercased and read as a word
+         ("NASA" -> "nasa", not "N A S A"). An initialism's CMU entry is its letters
+         spelled out (FBI -> /f b ay/); a word-acronym has a genuine pronunciation.
+      4. Initialism / unknown token -> spelled out letter by letter ("FBI" -> "F B I").
 
-    If the dictionary is unavailable (pyspellchecker not installed), unknown tokens fall
-    back to letter-spelling — the previous behavior for everything outside the curated list.
+    If the dictionaries are unavailable (pyspellchecker/pronouncing not installed),
+    unknown tokens fall back to letter-spelling — the previous behavior for everything
+    outside the curated list.
     """
     def replace(match: re.Match[str]) -> str:
         token = match.group(0)
@@ -556,6 +560,12 @@ def _expand_acronyms(text: str) -> str:
             # "S L O W"). Capitalization carries no pronunciation information for the model,
             # so lowercase it fully.
             return token.lower()
+        if _is_word_acronym(token):
+            # Word-acronyms are pronounced as a single word even though they aren't in the
+            # general dictionary ("NASA" -> "nasa", not "N A S A"). Decided via the CMU
+            # Pronouncing Dictionary: an initialism's entry is its letters spelled out, a
+            # word-acronym's is a real pronunciation.
+            return token.lower()
         return ' '.join(token)
 
     return _ALL_CAPS_WORD_RE.sub(replace, text)
@@ -563,6 +573,18 @@ def _expand_acronyms(text: str) -> str:
 
 _ALL_CAPS_WORD_RE = re.compile(r'\b[A-Z]{2,}\b')
 _SPELL_CHECKER_CACHE: dict[str, object] = {}
+_PRONOUNCING_CACHE: dict[str, object] = {}
+# ARPAbet name for each letter — how a human spells it out ("FBI" -> /f b ay/). Used by
+# _is_word_acronym to detect initialisms: if a token's CMU pronunciation equals its
+# letters read one by one, it is spelled out rather than pronounced as a word.
+_LETTER_PHONEMES = {
+    'A': 'EY0', 'B': 'B IY1', 'C': 'S IY1', 'D': 'D IY1', 'E': 'IY1',
+    'F': 'EH1 F', 'G': 'JH IY1', 'H': 'EY2 CH', 'I': 'AY1', 'J': 'JH EY1',
+    'K': 'K EY1', 'L': 'EH1 L', 'M': 'EH1 M', 'N': 'EH1 N', 'O': 'OW1',
+    'P': 'P IY1', 'Q': 'K Y UW1', 'R': 'AA1 R', 'S': 'EH1 S', 'T': 'T IY1',
+    'U': 'Y UW1', 'V': 'V IY1', 'W': 'D AH1 B Y UW1', 'X': 'K S IH0',
+    'Y': 'W AY1', 'Z': 'Z IY1',
+}
 
 
 def _load_spell_checker() -> object | None:
@@ -582,6 +604,52 @@ def _load_spell_checker() -> object | None:
         logger.warning('pyspellchecker unavailable (%s); all-caps words will be spelled out', exc)
     _SPELL_CHECKER_CACHE['sc'] = checker
     return checker
+
+
+def _load_pronouncing() -> object | None:
+    """Load the pronouncing (CMU Pronouncing Dictionary) module, cached.
+
+    Returns None if not installed — callers then fall back to letter-spelling for
+    unknown all-caps tokens instead of lowercasing word-acronyms like "NASA".
+    """
+    if 'pron' in _PRONOUNCING_CACHE:
+        return _PRONOUNCING_CACHE['pron']
+    module = None
+    try:
+        import pronouncing
+
+        module = pronouncing
+    except Exception as exc:  # pragma: no cover - depends on installed deps
+        logger.warning('pronouncing unavailable (%s); word-acronyms will be spelled out', exc)
+    _PRONOUNCING_CACHE['pron'] = module
+    return module
+
+
+def _phoneme_letters(phones: str) -> list[str]:
+    """Reduce an ARPAbet string to its letters, ignoring stress digits and spacing."""
+    return re.findall(r'[A-Z]+', re.sub(r'\d', '', phones.upper()))
+
+
+def _is_word_acronym(token: str) -> bool:
+    """True if an all-caps token is pronounced as a single word rather than spelled out.
+
+    An initialism's CMU entry IS its letters read one by one (FBI -> /f b ay/), while a
+    word-acronym has a genuine pronunciation (NASA -> /n ae s ah/). Tokens with no CMU
+    entry are treated as initialisms (letter-spelling) — the safe default.
+    """
+    pron = _load_pronouncing()
+    if pron is None:
+        return False
+    try:
+        phones = pron.phones_for_word(token.lower())
+    except Exception:  # pragma: no cover - defensive; a lookup error shouldn't kill TTS
+        return False
+    if not phones:
+        return False
+    actual = _phoneme_letters(phones[0])
+    expected = _phoneme_letters(' '.join(_LETTER_PHONEMES.get(c, '') for c in token.upper()))
+    # If the stored pronunciation is exactly the letters spelled out, it's an initialism.
+    return bool(actual) and actual != expected
 
 
 def _is_english_word(token: str) -> bool | None:

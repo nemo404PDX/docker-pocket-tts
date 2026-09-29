@@ -292,17 +292,44 @@ def test_lowercase_time_marker_is_left_alone():
     assert normalize_tts_text('I am fine') == 'I am fine'
 
 
-def test_unknown_all_caps_token_is_spelled_out():
-    # True acronyms/initialisms not in the curated list are spelled out letter by letter.
+def test_word_acronym_is_read_as_a_word():
+    # Word-acronyms are pronounced as a single word even though they aren't in the general
+    # dictionary ("NASA" -> "nasa", not "N A S A"). Decided via the CMU Pronouncing
+    # Dictionary: an initialism's entry is its letters spelled out, a word-acronym's is a
+    # real pronunciation. (Skipped if pronouncing is unavailable.)
+    import app.services.normalize as normalize_mod
+
+    if normalize_mod._load_pronouncing() is None:
+        pytest.skip('pronouncing not available in this environment')
+    assert normalize_tts_text('NASA launched a probe.') == 'nasa launched a probe.'
+
+
+def test_initialism_is_spelled_out():
+    # True initialisms whose CMU entry IS their letters spelled out are read letter by
+    # letter ("FBI" -> "F B I", not "fbi"). (Skipped if pronouncing is unavailable.)
+    import app.services.normalize as normalize_mod
+
+    if normalize_mod._load_pronouncing() is None:
+        pytest.skip('pronouncing not available in this environment')
+    assert normalize_tts_text('The FBI issued a report.') == 'The F B I issued a report.'
+
+
+def test_word_acronym_fallback_without_pronouncing(monkeypatch):
+    # If pronouncing is unavailable, word-acronyms fall back to letter-spelling (the
+    # pre-CMU behavior) instead of being lowercased.
+    import app.services.normalize as normalize_mod
+
+    monkeypatch.setattr(normalize_mod, '_load_pronouncing', lambda: None)
     assert normalize_tts_text('NASA launched a probe.') == 'N A S A launched a probe.'
 
 
 def test_all_caps_fallback_without_dictionary(monkeypatch):
-    # If pyspellchecker is unavailable, unknown all-caps tokens fall back to
+    # If both dictionaries are unavailable, unknown all-caps tokens fall back to
     # letter-spelling (the pre-dictionary behavior) instead of being lowercased.
     import app.services.normalize as normalize_mod
 
     monkeypatch.setattr(normalize_mod, '_load_spell_checker', lambda: None)
+    monkeypatch.setattr(normalize_mod, '_load_pronouncing', lambda: None)
     assert normalize_tts_text('The SLOW path') == 'The S L O W path'
 
 
