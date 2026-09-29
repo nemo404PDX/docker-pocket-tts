@@ -127,6 +127,43 @@ def test_long_segment_splits_at_word_boundary():
     assert ' '.join(segments).replace('  ', ' ') == text
 
 
+def test_long_segment_prefers_comma_break():
+    # A comma inside the window is a natural pause point — split there instead of
+    # mid-clause, mirroring pocket-tts's own fallback split set (`,;:`).
+    config = TtsPipelineConfig(segmentation='sentence', normalize=False, max_segment_chars=40)
+    text = 'Alpha beta gamma delta epsilon zeta, eta theta iota kappa lambda mu nu xi omicron tail end.'
+    segments = segment_tts_text(text, config)
+    assert segments[0] == 'Alpha beta gamma delta epsilon zeta,'
+    assert all(len(segment) <= 40 for segment in segments[:-1])
+    # No text is lost across the split.
+    assert ' '.join(segments).replace('  ', ' ') == text
+
+
+def test_long_segment_falls_back_to_word_boundary_without_comma():
+    # No weak punctuation in the window → fall back to the last word boundary
+    # before max_chars (previous behavior).
+    config = TtsPipelineConfig(segmentation='sentence', normalize=False, max_segment_chars=40)
+    text = 'One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen tail end.'
+    segments = segment_tts_text(text, config)
+    assert all(len(segment) <= 40 for segment in segments[:-1])
+    assert ' '.join(segments).replace('  ', ' ') == text
+
+
+def test_default_cap_keeps_segments_token_safe():
+    # pocket-tts caps each generation chunk at 50 tokens; prose runs ~2.8-3.2
+    # chars/token, so the default cap must keep comma-free sentences well under it.
+    config = TtsPipelineConfig(segmentation='sentence', normalize=False)
+    words = (
+        'the quick brown fox jumps over the lazy dog and keeps running through the '
+        'dark forest until it finally reaches the river bank at dawn'
+    ).split()
+    text = (' '.join(words * 3)).capitalize() + '.'
+    segments = segment_tts_text(text, config)
+    assert len(segments) > 1
+    assert all(len(segment) <= 130 for segment in segments)
+    assert ' '.join(segments).replace('  ', ' ') == text
+
+
 def test_debug_output_contains_stage_trace():
     result = debug_normalize("Use **bold** and don't panic.")
     stages = [stage for stage, _output in result.steps]

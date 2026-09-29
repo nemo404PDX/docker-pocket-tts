@@ -28,8 +28,18 @@ EmojiHandling = Literal['strip', 'describe', 'keep']
 SegmentationMode = Literal['none', 'paragraph', 'sentence']
 
 DEFAULT_CODE_BLOCK_PHRASE = ', see the code in the conversation history,'
-MAX_SEGMENT_CHARS = 280
+# pocket-tts generates one chunk per segment and caps each at MAX_TOKEN_PER_CHUNK
+# (50 tokens). Past that limit the model stops emitting EOS cleanly and starts
+# looping tail words ("side by side by side"). Calibrated against the English
+# sentencepiece tokenizer: prose runs ~2.8-3.2 chars/token, so 130 chars keeps a
+# segment at roughly 45 tokens or fewer even in token-dense text (acronym
+# expansions like "H T T P S" are denser still). _split_long_segment additionally
+# prefers weak-punctuation breaks so most long clauses split well under this cap.
+MAX_SEGMENT_CHARS = 130
 PATH_DOT_TOKEN = '\x02PD\x03'
+# Weak punctuation used to break long clauses at natural pause points, mirroring
+# pocket-tts's own fallback split set (`,;:`) in text_chunking.split_into_best_sentences.
+_WEAK_PUNCT = ',;:'
 
 _CODE_BLOCK_RE = re.compile(r'```[\s\S]*?```')
 _INLINE_CODE_RE = re.compile(r'`([^`]+)`')
@@ -567,14 +577,37 @@ def _split_long_segment(text: str, max_chars: int) -> list[str]:
     parts: list[str] = []
     remaining = text.strip()
     while len(remaining) > max_chars:
-        split_at = remaining.rfind(' ', 0, max_chars + 1)
-        if split_at <= 0:
-            split_at = max_chars
+        split_at = _find_split_point(remaining, max_chars)
         parts.append(remaining[:split_at].strip())
         remaining = remaining[split_at:].strip()
     if remaining:
         parts.append(remaining)
     return parts
+
+
+def _find_split_point(text: str, max_chars: int) -> int:
+    """Pick where to cut a segment that exceeds ``max_chars``.
+
+    Preference order (all within the first ``max_chars`` characters):
+      1. Just after weak punctuation (`,;:`) — natural pause points, mirroring
+         pocket-tts's own fallback split set in text_chunking.split_into_best_sentences.
+         Only considered in the latter half of the window so we don't produce tiny
+         fragments that would make the audio choppy.
+      2. The last space before ``max_chars`` (word boundary).
+      3. A hard cut at ``max_chars`` (e.g., one unbroken token longer than the cap).
+
+    Ending a segment on weak punctuation is safe downstream: pocket-tts's
+    _ensure_terminal_punctuation replaces a trailing comma/colon with a period, so
+    each chunk still gets clean sentence-final intonation.
+    """
+    min_split = max(1, max_chars // 2)
+    for idx in range(max_chars - 1, min_split - 1, -1):
+        if text[idx] in _WEAK_PUNCT:
+            return idx + 1
+    split_at = text.rfind(' ', 0, max_chars)
+    if split_at <= 0:
+        split_at = max_chars
+    return split_at
 
 
 def _protect_path_dots_for_segmentation(text: str) -> str:
