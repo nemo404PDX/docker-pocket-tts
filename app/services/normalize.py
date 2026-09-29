@@ -5,8 +5,10 @@ TTS-specific normalization and segmentation helpers.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 from app.services.preprocess import TextPreprocessor
@@ -36,6 +38,13 @@ DEFAULT_CODE_BLOCK_PHRASE = ', see the code in the conversation history,'
 # expansions like "H T T P S" are denser still). _split_long_segment additionally
 # prefers weak-punctuation breaks so most long clauses split well under this cap.
 MAX_SEGMENT_CHARS = 130
+# Hard per-segment token cap. pocket-tts generates one chunk per segment and caps each at
+# MAX_TOKEN_PER_CHUNK (50 tokens in text_chunking.py); past that the model stops emitting
+# EOS cleanly and loops tail words ("side by side by side"). Character counts are only a
+# proxy — hash-dense or acronym-heavy text can exceed 50 tokens well under 130 chars — so
+# _normalize_segments applies this cap with the real sentencepiece tokenizer as a final
+# pass. Set to 0 to disable (falls back to the character cap alone).
+MAX_SEGMENT_TOKENS = int(os.environ.get('POCKET_TTS_MAX_SEGMENT_TOKENS', '50')) or None
 PATH_DOT_TOKEN = '\x02PD\x03'
 # Weak punctuation used to break long clauses at natural pause points, mirroring
 # pocket-tts's own fallback split set (`,;:`) in text_chunking.split_into_best_sentences.
@@ -67,6 +76,19 @@ DEFAULT_HERMES_MARKER_PATTERN = r'/?\[[/\s]*(?:terminal|OUT-OF-BAND USER MESSAGE
 _FILENAME_RE = re.compile(
     r'(?<!\.)\b[a-z0-9_-]+\.[a-z0-9_-]{2,}(?:\.[a-z0-9._-]+)*\b', re.IGNORECASE
 )
+# Bare git-style short hashes (5-12 lowercase alnum chars containing at least one digit
+# AND one letter), e.g. "68187ab" or each half of a range like "52c36f7..68187ab".
+# Clients such as Open WebUI strip markdown before sending text to TTS, so backticked
+# hashes arrive bare and the inline-code protection never fires — number expansion then
+# mangles them ("sixty-eight thousand one hundred eighty-sevenab"), which makes the model
+# skip or garble the surrounding words. Requiring both a digit and a letter (in either
+# order) keeps normal words ("master", "remotes") and pure numbers ("12345" → "twelve
+# thousand...") untouched, while catching hashes that start with a digit like "68187ab".
+_BARE_HASH_RE = re.compile(r'\b(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{5,12}\b', re.IGNORECASE)
+# Mixed alphanumeric tokens containing digits (usernames, repo names: "nemo404PDX").
+# Without this protection the digit runs get expanded ("nemo four hundred four P D X"),
+# which both garbles the reading and inflates token counts past pocket-tts's 50-token cap.
+_MIXED_ALNUM_RE = re.compile(r'\b[A-Za-z]+\d[A-Za-z0-9]*\b')
 _VERSION_RE = re.compile(r'\bv\d+\.\d+(?:[\w.]+)?\b', re.IGNORECASE)
 _UNIX_PATH_RE = re.compile(r'(?<!\w)/(?:[a-z0-9._-]+/)*[a-z0-9._-]+', re.IGNORECASE)
 _INLINE_WHITESPACE_RE = re.compile(r'[^\S\n]{2,}')
@@ -243,6 +265,9 @@ class TtsPipelineConfig:
     emoji_handling: EmojiHandling = 'strip'
     segmentation: SegmentationMode = 'sentence'
     max_segment_chars: int = MAX_SEGMENT_CHARS
+    # Hard per-segment token cap (pocket-tts's 50-token chunk limit). None disables the
+    # tokenizer-based pass and relies on max_segment_chars alone.
+    max_segment_tokens: int | None = MAX_SEGMENT_TOKENS
     run_number_expansion: bool = True
     drop_source_links_section: bool = False
     # Regex of client markers to strip (whole line removed). None → default pattern.
@@ -453,7 +478,11 @@ def _protect_tokens(text: str) -> tuple[str, dict[str, str]]:
 
         def replace(match: re.Match[str]) -> str:
             nonlocal counter
-            token = f'\x02PROT_{_alpha_token(counter)}\x03'
+            # No underscore in the token: _ITALIC_UNDERSCORE_RE / _BOLD_UNDERSCORE_RE match
+            # on '_' pairs and would eat the separator of any two protected tokens in the
+            # same text, making them unrecoverable (literal \x02PROT..\x03 garbage then
+            # reaches the TTS model, which skips or garbles the surrounding words).
+            token = f'\x02PROT{_alpha_token(counter)}\x03'
             counter += 1
             token_map[token] = value_fn(match) if value_fn else match.group(0)
             return token
@@ -464,6 +493,8 @@ def _protect_tokens(text: str) -> tuple[str, dict[str, str]]:
     protect(_VERSION_RE)
     protect(_UNIX_PATH_RE)
     protect(_FILENAME_RE)
+    protect(_BARE_HASH_RE)
+    protect(_MIXED_ALNUM_RE)
     return text, token_map
 
 
@@ -550,17 +581,17 @@ def _segment_normalized_text(text: str, config: TtsPipelineConfig) -> list[str]:
 
     if config.segmentation == 'paragraph':
         raw_segments = re.split(r'\n\s*\n+', trimmed)
-        return _normalize_segments(raw_segments, config.max_segment_chars)
+        return _normalize_segments(raw_segments, config.max_segment_chars, config.max_segment_tokens)
 
     path_protected = _protect_path_dots_for_segmentation(trimmed)
     sentence_matches = _SENTENCE_RE.findall(path_protected)
     if not sentence_matches:
         return [_restore_punctuation(trimmed)]
     restored = [_restore_path_dots_after_segmentation(segment) for segment in sentence_matches]
-    return _normalize_segments(restored, config.max_segment_chars)
+    return _normalize_segments(restored, config.max_segment_chars, config.max_segment_tokens)
 
 
-def _normalize_segments(segments: list[str], max_chars: int) -> list[str]:
+def _normalize_segments(segments: list[str], max_chars: int, max_tokens: int | None = None) -> list[str]:
     normalized: list[str] = []
     for segment in segments:
         cleaned = segment.strip()
@@ -568,9 +599,89 @@ def _normalize_segments(segments: list[str], max_chars: int) -> list[str]:
             continue
         for part in _split_long_segment(cleaned, max_chars):
             restored = _restore_punctuation(part.strip())
-            if restored:
+            if not restored:
+                continue
+            # Character caps are only a proxy for token counts — hash-dense or
+            # acronym-heavy text can exceed pocket-tts's 50-token chunk cap well under
+            # the character limit. Enforce the real cap with the model's own tokenizer.
+            if max_tokens:
+                normalized.extend(_split_segment_by_tokens(restored, max_tokens))
+            else:
                 normalized.append(restored)
     return normalized
+
+
+_TOKENIZER_CACHE: dict[str, object] = {}
+
+
+def _load_tokenizer() -> object | None:
+    """Load pocket-tts's sentencepiece tokenizer (cached). Returns None if unavailable.
+
+    Searches the configured model cache dir first, then the repo-local data dir and the
+    HuggingFace cache — wherever `hf download kyutai/pocket-tts` may have landed it.
+    """
+    if 'sp' in _TOKENIZER_CACHE:
+        return _TOKENIZER_CACHE['sp']
+
+    candidates = [Path(p) for p in (os.environ.get('POCKET_TTS_MODEL_CACHE_DIR'), './data/models/pocket-tts') if p]
+    candidates.append(Path.home() / '.cache' / 'huggingface')
+    model_path: Path | None = None
+    for root in candidates:
+        try:
+            matches = sorted(root.rglob('tokenizer.model'))
+        except OSError:
+            continue
+        if matches:
+            model_path = matches[0]
+            break
+
+    tokenizer = None
+    if model_path is not None:
+        try:
+            from sentencepiece import SentencePieceProcessor
+
+            sp = SentencePieceProcessor()
+            sp.load(str(model_path))
+            tokenizer = sp
+        except Exception as exc:  # pragma: no cover - depends on installed deps
+            logger.warning('Could not load sentencepiece tokenizer %s (%s); token cap disabled', model_path, exc)
+
+    _TOKENIZER_CACHE['sp'] = tokenizer
+    return tokenizer
+
+
+def _count_tokens(text: str) -> int | None:
+    """Token count under pocket-tts's own tokenizer, or None if unavailable."""
+    sp = _load_tokenizer()
+    if sp is None or not text.strip():
+        return None
+    try:
+        return len(sp.encode(text))
+    except Exception:  # pragma: no cover - defensive; tokenizer errors shouldn't kill TTS
+        return None
+
+
+def _split_segment_by_tokens(segment: str, max_tokens: int) -> list[str]:
+    """Split a segment so every part is at most ``max_tokens`` tokens.
+
+    Greedy word packing: keep appending words while the running total stays under the cap.
+    A single unbreakable token longer than the cap is returned as-is (nothing to do).
+    """
+    if _count_tokens(segment) in (None, 0):
+        return [segment] if segment.strip() else []
+
+    parts: list[str] = []
+    current: list[str] = []
+    for word in segment.split():
+        trial_count = _count_tokens(' '.join(current + [word]))
+        if current and trial_count is not None and trial_count > max_tokens:
+            parts.append(' '.join(current))
+            current = [word]
+        else:
+            current.append(word)
+    if current:
+        parts.append(' '.join(current))
+    return parts
 
 
 def _split_long_segment(text: str, max_chars: int) -> list[str]:

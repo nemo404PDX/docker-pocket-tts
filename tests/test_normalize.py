@@ -1,6 +1,8 @@
 from pathlib import Path
 import sys
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.normalize import (
@@ -263,3 +265,89 @@ def test_acronym_expansion_preserves_surrounding_numbers():
 def test_lowercase_acronym_is_not_expanded():
     # "ip" (lowercase) is a normal word here, not the acronym — left alone.
     assert normalize_tts_text('the ip address') == 'the ip address'
+
+
+# ─────────────────────────────────────────────
+# Hash / mixed-alnum protection (clients strip markdown before TTS)
+# ─────────────────────────────────────────────
+def test_bare_git_hash_is_not_number_expanded():
+    # Open WebUI strips backticks, so hashes arrive bare. They must survive number
+    # expansion intact instead of becoming "sixty-eight thousand one hundred eighty-sevenab".
+    out = normalize_tts_text('Commit 68187ab is pushed.')
+    assert '68187ab' in out
+    assert 'thousand' not in out
+
+
+def test_bare_hash_range_is_not_number_expanded():
+    # Each half of a range like "52c36f7..68187ab" must stay intact.
+    out = normalize_tts_text('Range 52c36f7..68187ab pushed.')
+    assert '52c36f7' in out and '68187ab' in out
+
+
+def test_mixed_alnum_username_is_not_number_expanded():
+    # "nemo404PDX" must not become "nemo four hundred four P D X".
+    out = normalize_tts_text('Repo nemo404PDX/docker-pocket-tts updated.')
+    assert 'nemo404PDX' in out
+
+
+def test_pure_numbers_still_expand():
+    # The hash protection must not swallow ordinary numbers.
+    out = normalize_tts_text('There are 12345 files.')
+    assert 'twelve thousand three hundred forty-five' in out
+
+
+def test_multiple_protected_tokens_restore_cleanly():
+    # Regression: two protected tokens in one text used to lose their separator via the
+    # italic-underscore markdown rule, leaking literal \x02PROT..\x03 garbage into TTS.
+    out = normalize_tts_text('Commit `68187ab` and range 52c36f7..68187ab pushed.')
+    assert '\x02' not in out and 'PROT' not in out
+    assert '68187ab' in out and '52c36f7' in out
+
+
+def test_token_cap_splits_hash_dense_segment():
+    # Hash-dense text can exceed pocket-tts's 50-token chunk cap well under the character
+    # limit; the tokenizer pass must split it. (Skipped if the model tokenizer is absent.)
+    from app.services.normalize import _count_tokens
+
+    if _count_tokens('hello world') is None:
+        pytest.skip('sentencepiece tokenizer not available in this environment')
+
+    config = TtsPipelineConfig(segmentation='sentence', normalize=False, max_segment_chars=200)
+    text = ' '.join(['68187ab'] * 30) + '.'
+    segments = segment_tts_text(text, config)
+    assert len(segments) > 1
+    for segment in segments:
+        assert _count_tokens(segment) <= 50
+
+
+def test_token_cap_disabled_keeps_single_segment():
+    from app.services.normalize import _count_tokens
+
+    if _count_tokens('hello world') is None:
+        pytest.skip('sentencepiece tokenizer not available in this environment')
+
+    # Char cap high enough that only the token pass could split it.
+    config = TtsPipelineConfig(
+        segmentation='sentence', normalize=False, max_segment_chars=400, max_segment_tokens=None
+    )
+    text = ' '.join(['68187ab'] * 30) + '.'
+    segments = segment_tts_text(text, config)
+    assert len(segments) == 1
+
+
+def test_token_cap_enabled_splits_same_text():
+    from app.services.normalize import _count_tokens
+
+    if _count_tokens('hello world') is None:
+        pytest.skip('sentencepiece tokenizer not available in this environment')
+
+    # Same text, same char cap — only the token pass differs. It must split a segment
+    # that fits comfortably under 400 chars but exceeds 50 tokens.
+    config = TtsPipelineConfig(
+        segmentation='sentence', normalize=False, max_segment_chars=400, max_segment_tokens=50
+    )
+    text = ' '.join(['68187ab'] * 30) + '.'
+    segments = segment_tts_text(text, config)
+    assert len(segments) > 1
+    for segment in segments:
+        assert _count_tokens(segment) <= 50
