@@ -461,3 +461,105 @@ def test_token_cap_enabled_splits_same_text():
     assert len(segments) > 1
     for segment in segments:
         assert _count_tokens(segment) <= 50
+
+
+# ─────────────────────────────────────────────
+# SCREAMING_SNAKE_CASE identifiers (env vars / constants)
+# ─────────────────────────────────────────────
+def test_snake_case_identifier_is_resolved_per_part():
+    # FALLBACK_UNKNOWN_VOICE must not be letter-spelled as one fused blob; each part is
+    # resolved on its own (real words lowercase, acronyms spelled out).
+    out = normalize_tts_text('Set FALLBACK_UNKNOWN_VOICE to true.')
+    assert 'F A L L B A C K' not in out  # no letter-spelling of the fused blob
+    assert 'fallback unknown voice' in out
+
+
+def test_snake_case_with_acronym_part_spells_out():
+    import app.services.normalize as normalize_mod
+
+    if normalize_mod._load_pronouncing() is None:
+        pytest.skip('pronouncing not available in this environment')
+    # The TTS part of a SCREAMING_SNAKE_CASE identifier spells out; word parts lowercase.
+    out = normalize_tts_text('POCKET_TTS_MAX_FRAMES set.')
+    assert 'pocket' in out and 'T T S' in out
+
+
+def test_snake_case_with_digits_keeps_them():
+    # Digits inside a SCREAMING_SNAKE_CASE identifier survive for number expansion.
+    out = normalize_tts_text('MAX_RETRIES_3 exceeded.')
+    assert 'three' in out or '3' in out
+
+
+# ─────────────────────────────────────────────
+# Product name (pocket-tts) spoken form
+# ─────────────────────────────────────────────
+def test_product_name_hyphenated_reads_as_pocket_tts():
+    # "pocket-tts" is the product's own name — it reads as "Pocket T T S", NOT
+    # "pocket text to speech" (the curated 'TTS' expansion) and not shredded.
+    out = normalize_tts_text('This runs on pocket-tts.')
+    assert 'Pocket T T S' in out
+    assert 'text to speech' not in out
+
+
+def test_product_name_camelcase_reads_as_pocket_tts():
+    out = normalize_tts_text('PocketTTS is fast.')
+    assert 'Pocket T T S' in out
+    assert 'text to speech' not in out
+
+
+def test_product_name_docker_prefixed_reads_as_docker_pocket_tts():
+    out = normalize_tts_text('The docker-pocket-tts repo hosts it.')
+    assert 'Docker Pocket T T S' in out
+    assert 'text to speech' not in out
+
+
+def test_product_name_in_path_is_spoken():
+    # Inside a repo path the product name is still spoken — that IS its own name being
+    # referenced ("nemo404PDX/docker-pocket-tts" -> ".../Docker Pocket T T S"). The docker
+    # prefix must be consumed as one unit (no dangling "docker-").
+    out = normalize_tts_text('Clone nemo404PDX/docker-pocket-tts now.')
+    assert 'nemo404PDX' in out
+    assert 'Docker Pocket T T S' in out
+    assert 'text to speech' not in out
+
+
+def test_product_name_longer_token_stays_filename():
+    # A longer token that merely contains the name (pocket-tts-server) is NOT the product
+    # name — it stays a filename, untouched.
+    out = normalize_tts_text('The pocket-tts-server package loads.')
+    assert 'pocket-tts-server' in out
+    assert 'text to speech' not in out
+
+
+# ─────────────────────────────────────────────
+# Number + unit tokens (2000ms / 2000 ms) reach the unit expander
+# ─────────────────────────────────────────────
+def test_glued_number_unit_is_expanded():
+    # "2000ms" used to be frozen by the bare-hash protection and reach TTS unexpanded;
+    # now it reads as "two thousand milliseconds".
+    out = normalize_tts_text('Latency was 2000ms.')
+    assert 'two thousand milliseconds' in out
+
+
+def test_spaced_number_unit_is_expanded():
+    out = normalize_tts_text('Latency was 2000 ms.')
+    assert 'two thousand milliseconds' in out
+
+
+def test_glued_khz_is_expanded():
+    # "24kHz" (hex-looking) must not be frozen as a hash; it reads as kilohertz.
+    out = normalize_tts_text('Sample rate is 24kHz.')
+    assert 'twenty-four kilohertz' in out
+
+
+def test_bare_git_hash_still_protected_after_hex_fix():
+    # The hex-only hash regex must still protect real git hashes (digits + a-f letters).
+    out = normalize_tts_text('Commit 68187ab is pushed.')
+    assert '68187ab' in out
+    assert 'thousand' not in out
+
+
+def test_non_hex_alnum_token_is_not_a_hash():
+    # A token with non-hex letters (g-z) is NOT a git hash — it must not be frozen.
+    out = normalize_tts_text('The word master stays.')
+    assert 'master' in out

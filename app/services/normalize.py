@@ -76,15 +76,18 @@ DEFAULT_HERMES_MARKER_PATTERN = r'/?\[[/\s]*(?:terminal|OUT-OF-BAND USER MESSAGE
 _FILENAME_RE = re.compile(
     r'(?<!\.)\b[a-z0-9_-]+\.[a-z0-9_-]{2,}(?:\.[a-z0-9._-]+)*\b', re.IGNORECASE
 )
-# Bare git-style short hashes (5-12 lowercase alnum chars containing at least one digit
-# AND one letter), e.g. "68187ab" or each half of a range like "52c36f7..68187ab".
-# Clients such as Open WebUI strip markdown before sending text to TTS, so backticked
-# hashes arrive bare and the inline-code protection never fires — number expansion then
-# mangles them ("sixty-eight thousand one hundred eighty-sevenab"), which makes the model
-# skip or garble the surrounding words. Requiring both a digit and a letter (in either
-# order) keeps normal words ("master", "remotes") and pure numbers ("12345" → "twelve
-# thousand...") untouched, while catching hashes that start with a digit like "68187ab".
-_BARE_HASH_RE = re.compile(r'\b(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{5,12}\b', re.IGNORECASE)
+# Bare git-style short hashes (5-12 hex chars containing at least one digit AND one
+# letter), e.g. "68187ab" or each half of a range like "52c36f7..68187ab". Git hashes are
+# SHA-1/SHA-256, so they are always hex — restricting to [0-9a-f] keeps number+unit
+# tokens ("2000ms", "24kHz") OUT of protection so the unit expander can read them (they
+# used to be frozen here and reach the model unexpanded). Clients such as Open WebUI
+# strip markdown before sending text to TTS, so backticked hashes arrive bare and the
+# inline-code protection never fires — number expansion then mangles them ("sixty-eight
+# thousand one hundred eighty-sevenab"), which makes the model skip or garble the
+# surrounding words. Requiring both a digit and a letter (in either order) keeps normal
+# words ("master", "remotes") and pure numbers ("12345" → "twelve thousand...")
+# untouched, while catching hashes that start with a digit like "68187ab".
+_BARE_HASH_RE = re.compile(r'\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{5,12}\b', re.IGNORECASE)
 # Mixed alphanumeric tokens containing digits (usernames, repo names: "nemo404PDX").
 # Without this protection the digit runs get expanded ("nemo four hundred four P D X"),
 # which both garbles the reading and inflates token counts past pocket-tts's 50-token cap.
@@ -198,6 +201,38 @@ ACRONYM_EXPANSIONS: dict[str, str] = {
     # time/era marker that must be spelled out ("nine AM" -> "nine A M", not "nine am").
     'AM': 'A M', 'PM': 'P M', 'AD': 'A D', 'BC': 'B C',
 }
+
+# SCREAMING_SNAKE_CASE identifiers (env vars, constants: FALLBACK_UNKNOWN_VOICE). The
+# markdown underscore rules would strip the separators and fuse the parts into one all-caps
+# blob that gets letter-spelled ("F A L L B A C K U N K N O W N ..."), which sounds like
+# static; each underscore-separated part is resolved on its own instead.
+_SNAKE_CASE_RE = re.compile(r'\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b')
+
+# The product's own name, in any casing/separator (pocket-tts, PocketTTS, "Pocket TTS",
+# docker-pocket-tts). Protected as a unit BEFORE the generic acronym passes so it reads as
+# "Pocket T T S" / "Docker Pocket T T S" — NOT "pocket text to speech" (the curated 'TTS'
+# expansion) and not shredded by sentencepiece. It is spoken in every context, including
+# inside a repo path ("nemo404PDX/docker-pocket-tts" -> ".../Docker Pocket T T S"), because
+# that IS the product's own name being referenced. The optional docker prefix must be
+# consumed as one unit: (?<!\w) rejects a match starting mid-word, and matching left-to-right
+# lets the docker-prefixed form win over a bare "pocket-tts" partial (which would otherwise
+# leave a dangling "docker-"). The trailing lookahead keeps it OUT of longer tokens
+# ("pocket-tts-server", "docker-pocket-tts.tar.gz" — a dot/hyphen/word char follows "tts"),
+# so those stay filenames. Longer identifiers (POCKET_TTS_MAX_...) are already resolved
+# part-by-part by the snake-case pass that runs first, so this only sees standalone forms.
+# The trailing lookahead rejects a TOKEN CONTINUATION — "tts" followed by word chars, or a
+# dot/hyphen that leads into more word chars ("pocket-tts-server", "docker-pocket-tts.tar.gz")
+# — but NOT terminal punctuation: "pocket-tts." (sentence end) still matches. (?![\w.-]*\w)
+# is true only when no word char follows through any run of word/dot/hyphen chars.
+_PRODUCT_NAME_RE = re.compile(
+    r'(?<!\w)(?:docker[\s_-])?pocket[\s_-]?tts\b(?![\w.-]*\w)', re.IGNORECASE
+)
+
+
+def _product_name_replacement(match: re.Match[str]) -> str:
+    # TTS is spelled out as letters — that's how the name is actually said.
+    return 'Docker Pocket T T S' if match.group(0)[:6].lower() == 'docker' else 'Pocket T T S'
+
 
 PUNCT_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r'\.{2,}'), '\x02EL\x03', ','),
@@ -496,6 +531,17 @@ def _protect_tokens(text: str) -> tuple[str, dict[str, str]]:
 
         text = pattern.sub(replace, text)
 
+    # SCREAMING_SNAKE_CASE identifiers (env vars: FALLBACK_UNKNOWN_VOICE). Protected first —
+    # the markdown underscore rules would otherwise strip the separators and fuse the parts
+    # into one all-caps blob that gets letter-spelled ("F A L L B A C K U N K N O W N ...").
+    protect(_SNAKE_CASE_RE, _resolve_snake_case)
+    # The product's own name in any casing/separator (pocket-tts, PocketTTS). Runs after the
+    # snake pass so longer identifiers are already resolved; protects standalone forms from
+    # the generic acronym passes ("tts" -> "text to speech") and sentencepiece shredding. It
+    # must run BEFORE _FILENAME_RE: inside a path/repo name ("nemo404PDX/docker-pocket-tts")
+    # its (?<![/\w]) lookbehind rejects it, so the filename pass then protects the whole token
+    # intact; if it ran after, the lookbehind would see the protection token instead of the slash.
+    protect(_PRODUCT_NAME_RE, _product_name_replacement)
     protect(_INLINE_CODE_RE, lambda m: m.group(1))
     protect(_VERSION_RE)
     protect(_UNIX_PATH_RE)
@@ -518,7 +564,13 @@ def _alpha_token(counter: int) -> str:
 
 
 def _restore_tokens(text: str, token_map: dict[str, str]) -> str:
-    for token, value in token_map.items():
+    # Restore in REVERSE insertion order: a later (outer) pattern may have wrapped an
+    # earlier (inner) protected span — e.g. `FALLBACK_UNKNOWN_VOICE` where the snake-case
+    # pass protected the identifier and the inline-code pass then wrapped it in backticks.
+    # The outer token's value contains the inner token string, so restoring outer-first
+    # re-exposes the inner one for its own replacement. (Flat, non-nested tokens restore
+    # identically in either order.)
+    for token, value in reversed(token_map.items()):
         text = text.replace(token, value)
     return text
 
@@ -609,6 +661,28 @@ def _decompose_camel_acronym(match: re.Match[str]) -> str:
     # the number-expansion stage that runs later turns bare digits into words ("five").
     parts = re.findall(r'[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|\d+', match.group(0))
     return ' '.join(_resolve_acronym_part(part) for part in parts)
+
+
+def _resolve_snake_case(match: re.Match[str]) -> str:
+    """Spoken form of a SCREAMING_SNAKE_CASE identifier (FALLBACK_UNKNOWN_VOICE).
+
+    Each underscore-separated part resolves with the same rules as the all-caps pass —
+    real words lowercase ("fallback"), true acronyms spell out ("TTS" -> "T T S") — so
+    env vars read naturally instead of being letter-spelled as one fused blob. Digits are
+    kept intact for the number-expansion stage that runs later.
+    """
+    parts = match.group(0).split('_')
+    resolved: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        if part.isdigit():
+            resolved.append(part)
+        elif part.isupper() and len(part) >= 2 and (_is_english_word(part) or _is_word_acronym(part)):
+            resolved.append(part.lower())
+        else:
+            resolved.append(' '.join(part))
+    return ' '.join(resolved)
 
 
 def _resolve_acronym_part(part: str) -> str:
