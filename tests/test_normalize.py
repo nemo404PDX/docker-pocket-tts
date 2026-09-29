@@ -270,8 +270,36 @@ def test_expands_acronyms_to_spoken_phrases():
 
 
 def test_leaves_mixed_case_words_alone():
-    # Case-sensitive: only all-caps tokens are expanded, so ffmpeg / iPhone stay intact.
+    # Single-uppercase words (ffmpeg, iPhone) tokenize cleanly and are left alone — only
+    # tokens with an embedded acronym (two consecutive capitals after the first) decompose.
     assert normalize_tts_text('ffmpeg and iPhone') == 'ffmpeg and iPhone'
+
+
+def test_mixed_case_embedded_acronym_is_decomposed():
+    # "WebUI" shreds into letters under sentencepiece (▁We b U I); decomposing at case
+    # boundaries gives a clean reading: real words lowercase, acronyms spelled out.
+    assert normalize_tts_text('Open WebUI is nice.') == 'Open web U I is nice.'
+
+
+def test_mixed_case_word_acronym_part_is_read_as_a_word():
+    # The acronym part of "SwiftUI" spells out; the word part lowercases (CMU decides).
+    import app.services.normalize as normalize_mod
+
+    if normalize_mod._load_pronouncing() is None:
+        pytest.skip('pronouncing not available in this environment')
+    assert normalize_tts_text('SwiftUI feels good.') == 'swift U I feels good.'
+
+
+def test_mixed_case_single_uppercase_stays_intact():
+    # GitHub / TypeScript tokenize into real word pieces (▁G it H ub) — no embedded
+    # acronym, so they are left untouched rather than decomposed.
+    assert normalize_tts_text('GitHub and TypeScript') == 'GitHub and TypeScript'
+
+
+def test_mixed_case_acronym_with_digits_keeps_everything():
+    # Digits inside a mixed-case token must not be dropped ("HTML5" -> "H T M L five").
+    out = normalize_tts_text('We use HTML5 now.')
+    assert 'H T M L' in out and 'five' in out
 
 
 def test_acronym_expansion_preserves_surrounding_numbers():

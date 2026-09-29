@@ -475,11 +475,16 @@ def _protect_tokens(text: str) -> tuple[str, dict[str, str]]:
     token_map: dict[str, str] = {}
     counter = 0
 
-    def protect(pattern: re.Pattern[str], value_fn=None) -> None:
+    def protect(pattern: re.Pattern[str], value_fn=None, skip_camel: bool = False) -> None:
         nonlocal text, counter
 
         def replace(match: re.Match[str]) -> str:
             nonlocal counter
+            # Tokens with an embedded acronym (HTML5, WebUI2) are left unprotected so the
+            # camel pass in _expand_acronyms can decompose them ("H T M L 5") instead of
+            # freezing them whole — sentencepiece would shred a frozen one into letters.
+            if skip_camel and _CAMEL_ACRONYM_RE.fullmatch(match.group(0)):
+                return match.group(0)
             # No underscore in the token: _ITALIC_UNDERSCORE_RE / _BOLD_UNDERSCORE_RE match
             # on '_' pairs and would eat the separator of any two protected tokens in the
             # same text, making them unrecoverable (literal \x02PROT..\x03 garbage then
@@ -495,8 +500,8 @@ def _protect_tokens(text: str) -> tuple[str, dict[str, str]]:
     protect(_VERSION_RE)
     protect(_UNIX_PATH_RE)
     protect(_FILENAME_RE)
-    protect(_BARE_HASH_RE)
-    protect(_MIXED_ALNUM_RE)
+    protect(_BARE_HASH_RE, skip_camel=True)
+    protect(_MIXED_ALNUM_RE, skip_camel=True)
     return text, token_map
 
 
@@ -552,6 +557,12 @@ def _expand_acronyms(text: str) -> str:
     If the dictionaries are unavailable (pyspellchecker/pronouncing not installed),
     unknown tokens fall back to letter-spelling — the previous behavior for everything
     outside the curated list.
+
+    A second, case-sensitive pass handles mixed-case tokens with an embedded acronym
+    ("WebUI", "OpenAI"): they decompose at case boundaries and each part resolves with
+    the same rules ("WebUI" -> "web U I"). Without this, sentencepiece shreds them into
+    letters (▁We b U I) and the model spells out the tail. Single-uppercase words
+    (iPhone, MacBook) tokenize cleanly and are left alone.
     """
     def replace(match: re.Match[str]) -> str:
         token = match.group(0)
@@ -574,10 +585,50 @@ def _expand_acronyms(text: str) -> str:
             return token.lower()
         return ' '.join(token)
 
-    return _ALL_CAPS_WORD_RE.sub(replace, text)
+    text = _ALL_CAPS_WORD_RE.sub(replace, text)
+    # Mixed-case tokens with embedded acronyms ("WebUI", "OpenAI") are not caught by the
+    # all-caps pass: sentencepiece shreds them into letters (▁We b U I) and the model spells
+    # out the tail. Decompose at case boundaries and resolve each part with the same rules —
+    # real words lowercase ("Web" -> "web"), acronyms keep their resolution ("UI" -> "U I").
+    return _CAMEL_ACRONYM_RE.sub(_decompose_camel_acronym, text)
 
 
 _ALL_CAPS_WORD_RE = re.compile(r'\b[A-Z]{2,}\b')
+# Mixed-case tokens containing an embedded acronym: at least two consecutive uppercase
+# letters somewhere after the first (WebUI, OpenAI). Single-uppercase words
+# (iPhone, MacBook) tokenize cleanly and read fine as-is, so they are left alone.
+# The (?<!\x02) lookbehind keeps this from matching INSIDE a protected token
+# (\x02PROTa\x03 — "PROTa" looks like a camel token); without it the pass mangles every
+# protected span in the text and _restore_tokens can no longer find them.
+_CAMEL_ACRONYM_RE = re.compile(r'(?<!\x02)\b[A-Z][a-z0-9]*[A-Z]{2}[A-Za-z0-9]*\b')
+
+
+def _decompose_camel_acronym(match: re.Match[str]) -> str:
+    """Resolve a mixed-case token part by part (WebUI -> "web U I")."""
+    # Digits are kept as their own parts so nothing is dropped ("HTML5" -> "H T M L 5");
+    # the number-expansion stage that runs later turns bare digits into words ("five").
+    parts = re.findall(r'[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|\d+', match.group(0))
+    return ' '.join(_resolve_acronym_part(part) for part in parts)
+
+
+def _resolve_acronym_part(part: str) -> str:
+    """Spoken form of one case-boundary segment of a mixed-case token.
+
+    Resolution mirrors the all-caps pass: curated spoken forms first, then real English
+    words and word-acronyms lowercase ("Web" -> "web"), everything else spells out
+    letter by letter ("UI" -> "U I").
+    """
+    spoken = ACRONYM_EXPANSIONS.get(part.upper())
+    if spoken:
+        return spoken
+    if part.isupper():
+        # All-caps segment: real words read as a word (rare), true acronyms spell out.
+        if len(part) >= 2 and (_is_english_word(part) or _is_word_acronym(part)):
+            return part.lower()
+        return ' '.join(part)
+    if _is_english_word(part) or _is_word_acronym(part):
+        return part.lower()
+    return part
 _SPELL_CHECKER_CACHE: dict[str, object] = {}
 _PRONOUNCING_CACHE: dict[str, object] = {}
 # ARPAbet name for each letter — how a human spells it out ("FBI" -> /f b ay/). Used by
