@@ -15,9 +15,8 @@ from app.logging_config import get_logger
 
 logger = get_logger('audio')
 
-# Valid audio formats (what we advertise as *requestable*). Actual encodability is
-# checked at runtime via supported_formats() — e.g. aac/opus need an ffmpeg backend.
-VALID_FORMATS = {'mp3', 'wav', 'opus', 'aac', 'flac', 'pcm'}
+# Target loudness for startup voice normalization, and the tolerance band within which a
+# file is left untouched. Used as defaults by normalize_voice_wavs().
 TARGET_VOICE_DBFS = -20.0
 VOICE_NORMALIZE_TOLERANCE_DB = 3.0
 

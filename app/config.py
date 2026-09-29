@@ -4,7 +4,6 @@ Loads settings from environment variables with sensible defaults.
 """
 
 import os
-import sys
 from pathlib import Path
 
 # Canonical default for the code-block placeholder lives in normalize.py (where

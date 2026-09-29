@@ -3,7 +3,6 @@ Flask routes for the OpenAI-compatible TTS API.
 """
 
 import hmac
-import secrets
 import time
 
 import torch
@@ -128,8 +127,8 @@ def _build_pipeline_config(data: dict, app_config) -> TtsPipelineConfig:
         'TTS_CODE_BLOCK_PHRASE',
         Config.TTS_CODE_BLOCK_PHRASE,
     )
-    # Client-marker regex (server-level; not exposed per-request). Single source of truth is
-    # Config (which reads normalize.DEFAULT_HERMES_MARKER_PATTERN); fall back if absent.
+    # Client-marker regex (server-level default; overridable per-request). Single source of
+    # truth is Config (which reads normalize.DEFAULT_HERMES_MARKER_PATTERN); fall back if absent.
     marker_pattern_default = app_config.get(
         'TTS_HERMES_MARKER_PATTERN',
         Config.TTS_HERMES_MARKER_PATTERN,
