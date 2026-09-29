@@ -173,10 +173,11 @@ ABBREVIATIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'\bTL;DR\b', re.IGNORECASE), "too long, did not read"),
 )
 
-# All-caps acronyms/initialisms that TTS models mangle when read as a word ("IP" ->
-# "eye-py", "CPU" -> "soo-oo"). Expanded to their spoken form so every voice says them
-# consistently. Matching is case-sensitive on the all-caps token, so mixed-case words like
-# "ffmpeg" or "iPhone" are left alone (add them here explicitly if you want a specific reading).
+# Curated spoken forms for all-caps tokens that should NOT be read as spaced letters.
+# Only entries whose spoken form differs from plain letter-spelling belong here — every
+# other all-caps token is handled generically by _expand_all_caps_words: real English
+# words (lowercased, e.g. "SLOW" -> "slow") and true acronyms (spelled out, e.g.
+# "NASA" -> "N A S A"), decided via the pyspellchecker word-frequency dictionary.
 ACRONYM_EXPANSIONS: dict[str, str] = {
     # Spoken as individual letters (spaced so the model reads each letter).
     'AI': 'A I', 'API': 'A P I', 'CPU': 'C P U', 'GPU': 'G P U', 'IP': 'I P',
@@ -194,14 +195,6 @@ ACRONYM_EXPANSIONS: dict[str, str] = {
     'TTS': 'text to speech', 'STT': 'speech to text', 'LLM': 'large language model',
     'NLP': 'natural language processing', 'ML': 'machine learning',
 }
-
-# Precompiled: word-boundary, case-sensitive (all-caps tokens only). Longer terms first so
-# e.g. "HTTPS" isn't partially eaten by "HTTP".
-_ACRONYM_RULES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
-    (re.compile(rf'\b{term}\b'), spoken)
-    for term, spoken in sorted(ACRONYM_EXPANSIONS.items(), key=lambda kv: -len(kv[0]))
-    if spoken
-)
 
 PUNCT_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r'\.{2,}'), '\x02EL\x03', ','),
@@ -533,14 +526,70 @@ def _expand_abbreviations(text: str) -> str:
 
 
 def _expand_acronyms(text: str) -> str:
-    """Expand all-caps acronyms to their spoken form so TTS reads them consistently.
+    """Normalize all-caps tokens so TTS reads them consistently.
 
     Case-sensitive on the all-caps token, so mixed-case words (ffmpeg, iPhone) are left
-    alone. Longer terms are applied first so "HTTPS" isn't partially eaten by "HTTP".
+    alone. Resolution order per token:
+      1. ACRONYM_EXPANSIONS — curated spoken forms ("TTS" -> "text to speech").
+      2. Real English word (pyspellchecker dictionary) -> lowercased and read as a word
+         ("SLOW" -> "slow", sentence-initial capital preserved). Without this, the
+         sentencepiece tokenizer splits all-caps words into single letters and the model
+         spells them out ("S L O W").
+      3. True acronym/initialism -> spelled out letter by letter ("NASA" -> "N A S A").
+
+    If the dictionary is unavailable (pyspellchecker not installed), unknown tokens fall
+    back to letter-spelling — the previous behavior for everything outside the curated list.
     """
-    for pattern, replacement in _ACRONYM_RULES:
-        text = pattern.sub(replacement, text)
-    return text
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if len(token) < 2:
+            return token
+        spoken = ACRONYM_EXPANSIONS.get(token)
+        if spoken:
+            return spoken
+        if _is_english_word(token):
+            # ALL-CAPS on a real word is emphasis (or a proper noun) — either way it must be
+            # read as a word, not spelled out letter by letter ("SLOW" -> "slow", not
+            # "S L O W"). Capitalization carries no pronunciation information for the model,
+            # so lowercase it fully.
+            return token.lower()
+        return ' '.join(token)
+
+    return _ALL_CAPS_WORD_RE.sub(replace, text)
+
+
+_ALL_CAPS_WORD_RE = re.compile(r'\b[A-Z]{2,}\b')
+_SPELL_CHECKER_CACHE: dict[str, object] = {}
+
+
+def _load_spell_checker() -> object | None:
+    """Load the pyspellchecker English word-frequency dictionary (cached).
+
+    Returns None if pyspellchecker is not installed — callers then fall back to
+    letter-spelling unknown all-caps tokens instead of lowercasing them.
+    """
+    if 'sc' in _SPELL_CHECKER_CACHE:
+        return _SPELL_CHECKER_CACHE['sc']
+    checker = None
+    try:
+        from spellchecker import SpellChecker
+
+        checker = SpellChecker()
+    except Exception as exc:  # pragma: no cover - depends on installed deps
+        logger.warning('pyspellchecker unavailable (%s); all-caps words will be spelled out', exc)
+    _SPELL_CHECKER_CACHE['sc'] = checker
+    return checker
+
+
+def _is_english_word(token: str) -> bool | None:
+    """True/False if the dictionary decides, None if it is unavailable."""
+    sc = _load_spell_checker()
+    if sc is None:
+        return None
+    try:
+        return token.lower() in sc
+    except Exception:  # pragma: no cover - defensive; a lookup error shouldn't kill TTS
+        return None
 
 
 def _normalize_dot_prefixed_tokens(text: str) -> str:

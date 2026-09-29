@@ -114,7 +114,8 @@ def test_sentence_mode_handles_dot_tokens_without_false_split():
 
 def test_short_sentences_are_preserved():
     config = TtsPipelineConfig(segmentation='sentence')
-    assert segment_tts_text('OK. No.', config) == ['OK.', 'No.']
+    # "OK" is a real English word, so it's read as a word (lowercased), not spelled out.
+    assert segment_tts_text('OK. No.', config) == ['ok.', 'No.']
 
 
 def test_long_segment_splits_at_word_boundary():
@@ -189,7 +190,8 @@ def test_source_links_tail_kept_when_disabled():
     config = TtsPipelineConfig(drop_source_links_section=False)
     text = 'Story content.\n\n--- SOURCE LINKS ---\n- https://example.com'
     normalized = normalize_tts_text(text, config)
-    assert 'SOURCE LINKS' in normalized
+    # The section is kept (only its all-caps words are lowercased for consistent reading).
+    assert 'source links' in normalized
 
 
 # ─────────────────────────────────────────────
@@ -265,6 +267,31 @@ def test_acronym_expansion_preserves_surrounding_numbers():
 def test_lowercase_acronym_is_not_expanded():
     # "ip" (lowercase) is a normal word here, not the acronym — left alone.
     assert normalize_tts_text('the ip address') == 'the ip address'
+
+
+def test_all_caps_common_word_is_read_as_a_word():
+    # Real English words in all caps must be lowercased and read as a word, not spelled
+    # out letter by letter ("SLOW" -> "slow", not "S L O W").
+    assert normalize_tts_text('The SLOW path is fine.') == 'The slow path is fine.'
+
+
+def test_all_caps_common_word_is_lowercased_fully():
+    # Real words are lowercased fully (capitalization carries no pronunciation info).
+    assert normalize_tts_text('NEVER do that') == 'never do that'
+
+
+def test_unknown_all_caps_token_is_spelled_out():
+    # True acronyms/initialisms not in the curated list are spelled out letter by letter.
+    assert normalize_tts_text('NASA launched a probe.') == 'N A S A launched a probe.'
+
+
+def test_all_caps_fallback_without_dictionary(monkeypatch):
+    # If pyspellchecker is unavailable, unknown all-caps tokens fall back to
+    # letter-spelling (the pre-dictionary behavior) instead of being lowercased.
+    import app.services.normalize as normalize_mod
+
+    monkeypatch.setattr(normalize_mod, '_load_spell_checker', lambda: None)
+    assert normalize_tts_text('The SLOW path') == 'The S L O W path'
 
 
 # ─────────────────────────────────────────────

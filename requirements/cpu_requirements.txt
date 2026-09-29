@@ -5,6 +5,10 @@
 flask>=3.0.0
 waitress>=3.0.0
 pocket-tts==3.3.0
+# English word-frequency dictionary (pure Python, no C deps) — decides whether an
+# all-caps token is a real word ("SLOW" -> "slow") or a true acronym ("NASA" -> "N A S A").
+# normalize.py degrades gracefully to letter-spelling if it's missing.
+pyspellchecker>=0.8,<1
 
 # Audio processing (soundfile is imported directly by app/services/audio.py;
 # numpy/scipy are transitive deps of pocket-tts and not pinned here)
