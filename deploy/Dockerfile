@@ -2,8 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# libsndfile1 backs soundfile (wav/mp3/flac encoding). We deliberately do NOT install
+# ffmpeg: torchaudio 2.x's CPU build only registers the `soundfile` audio backend, so an
+# ffmpeg binary is never used for encoding — aac/opus stay unavailable (see supported_formats()).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
     libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
