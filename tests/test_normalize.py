@@ -194,3 +194,35 @@ def test_none_marker_pattern_uses_default():
     # None (unset) behaves exactly like the default pattern.
     text = 'Before.\n[OUT-OF-BAND USER MESSAGE] x\nAfter.'
     assert normalize_tts_text(text, TtsPipelineConfig(normalize=False)) == 'Before.\nAfter.'
+
+
+# ─────────────────────────────────────────────
+# Acronym / tech-term expansion (consistent pronunciation)
+# ─────────────────────────────────────────────
+def test_expands_all_caps_acronyms_to_letters():
+    assert normalize_tts_text('The IP and CPU are busy.') == 'The I P and C P U are busy.'
+
+
+def test_expands_longer_terms_before_shorter():
+    # HTTPS must not be partially eaten by HTTP.
+    assert normalize_tts_text('Use HTTPS not HTTP.') == 'Use H T T P S not H T T P.'
+
+
+def test_expands_acronyms_to_spoken_phrases():
+    assert normalize_tts_text('The LLM uses NLP.') == 'The large language model uses natural language processing.'
+
+
+def test_leaves_mixed_case_words_alone():
+    # Case-sensitive: only all-caps tokens are expanded, so ffmpeg / iPhone stay intact.
+    assert normalize_tts_text('ffmpeg and iPhone') == 'ffmpeg and iPhone'
+
+
+def test_acronym_expansion_preserves_surrounding_numbers():
+    # Acronyms expand before number expansion; the IP address digits are untouched.
+    out = normalize_tts_text('The IP is 192.168.1.5.')
+    assert 'I P' in out and '192.168.1.5' in out
+
+
+def test_lowercase_acronym_is_not_expanded():
+    # "ip" (lowercase) is a normal word here, not the acronym — left alone.
+    assert normalize_tts_text('the ip address') == 'the ip address'

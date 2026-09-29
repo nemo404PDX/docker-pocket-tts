@@ -141,6 +141,36 @@ ABBREVIATIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r'\bTL;DR\b', re.IGNORECASE), "too long, did not read"),
 )
 
+# All-caps acronyms/initialisms that TTS models mangle when read as a word ("IP" ->
+# "eye-py", "CPU" -> "soo-oo"). Expanded to their spoken form so every voice says them
+# consistently. Matching is case-sensitive on the all-caps token, so mixed-case words like
+# "ffmpeg" or "iPhone" are left alone (add them here explicitly if you want a specific reading).
+ACRONYM_EXPANSIONS: dict[str, str] = {
+    # Spoken as individual letters (spaced so the model reads each letter).
+    'AI': 'A I', 'API': 'A P I', 'CPU': 'C P U', 'GPU': 'G P U', 'IP': 'I P',
+    'URL': 'U R L', 'URI': 'U R I', 'UUID': 'U U I D', 'JSON': 'J S O N',
+    'XML': 'X M L', 'HTML': 'H T M L', 'CSS': 'C S S', 'SQL': 'S Q L',
+    'SSH': 'S S H', 'DNS': 'D N S', 'HTTP': 'H T T P', 'HTTPS': 'H T T P S',
+    'TCP': 'T C P', 'UDP': 'U D P', 'LAN': 'L A N', 'WAN': 'W A N',
+    'RAM': 'R A M', 'ROM': 'R O M', 'USB': 'U S B', 'HDD': 'H D D',
+    'SSD': 'S S D', 'LED': 'L E D', 'LCD': 'L C D', 'TV': 'T V',
+    'PC': 'P C', 'OS': 'O S', 'CLI': 'C L I', 'SDK': 'S D K',
+    'IDE': 'I D E', 'CI': 'C I', 'CDN': 'C D N', 'OTA': 'O T A',
+    'FAQ': 'F A Q', 'DIY': 'D I Y', 'FYI': 'F Y I', 'IMO': 'I M O',
+    'ETA': 'E T A', 'CEO': 'C E O', 'CTO': 'C T O', 'COO': 'C O O',
+    'KPI': 'K P I', 'ROI': 'R O I', 'SLA': 'S L A', 'SLO': 'S L O',
+    'TTS': 'text to speech', 'STT': 'speech to text', 'LLM': 'large language model',
+    'NLP': 'natural language processing', 'ML': 'machine learning',
+}
+
+# Precompiled: word-boundary, case-sensitive (all-caps tokens only). Longer terms first so
+# e.g. "HTTPS" isn't partially eaten by "HTTP".
+_ACRONYM_RULES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(rf'\b{term}\b'), spoken)
+    for term, spoken in sorted(ACRONYM_EXPANSIONS.items(), key=lambda kv: -len(kv[0]))
+    if spoken
+)
+
 PUNCT_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r'\.{2,}'), '\x02EL\x03', ','),
     (re.compile(r'[—–]'), '\x02DA\x03', ','),
@@ -303,6 +333,7 @@ def _normalize_internal(
     protected_text = _normalize_apostrophes(protected_text)
     protected_text = _expand_contractions(protected_text)
     protected_text = _expand_abbreviations(protected_text)
+    protected_text = _expand_acronyms(protected_text)
     protected_text = _normalize_dot_prefixed_tokens(protected_text)
     if config.run_number_expansion:
         protected_text = _NUMBER_PREPROCESSOR.process(protected_text)
@@ -456,6 +487,17 @@ def _expand_contractions(text: str) -> str:
 
 def _expand_abbreviations(text: str) -> str:
     for pattern, replacement in ABBREVIATIONS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _expand_acronyms(text: str) -> str:
+    """Expand all-caps acronyms to their spoken form so TTS reads them consistently.
+
+    Case-sensitive on the all-caps token, so mixed-case words (ffmpeg, iPhone) are left
+    alone. Longer terms are applied first so "HTTPS" isn't partially eaten by "HTTP".
+    """
+    for pattern, replacement in _ACRONYM_RULES:
         text = pattern.sub(replacement, text)
     return text
 

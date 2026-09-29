@@ -95,6 +95,8 @@ class TTSService:
         self._voice_cache_lock = threading.Lock()
         self.voices_dir: str | None = None
         self._model_loaded = False
+        # Extra decoder frames after end-of-speech (None → pocket-tts's built-in guess).
+        self.frames_after_eos: int | None = Config.FRAMES_AFTER_EOS
 
     @property
     def is_loaded(self) -> bool:
@@ -326,7 +328,7 @@ class TTSService:
             raise RuntimeError('Model not loaded')
 
         t0 = time.time()
-        audio = self.model.generate_audio(voice_state, text)
+        audio = self.model.generate_audio(voice_state, text, frames_after_eos=self.frames_after_eos)
         gen_time = time.time() - t0
 
         logger.info(f'Generated {len(text)} chars in {gen_time:.2f}s')
@@ -347,7 +349,7 @@ class TTSService:
             raise RuntimeError('Model not loaded')
 
         logger.info(f'Starting streaming generation for {len(text)} chars')
-        yield from self.model.generate_audio_stream(voice_state, text)
+        yield from self.model.generate_audio_stream(voice_state, text, frames_after_eos=self.frames_after_eos)
 
     def list_voices(self) -> list[dict]:
         """

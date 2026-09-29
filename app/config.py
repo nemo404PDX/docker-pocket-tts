@@ -116,6 +116,16 @@ class Config:
     # breathing room. 0 disables the gap entirely.
     SEGMENT_GAP_MS = int(os.environ.get('POCKET_TTS_SEGMENT_GAP_MS', '200'))
 
+    # Extra decoder frames to generate after pocket-tts detects end-of-speech (1 frame =
+    # 80 ms at 12.5 Hz). Empty/unset uses pocket-tts's built-in guess (~3 frames), which is
+    # short enough that some voices clip the final consonant/syllable. Set e.g. "6" for a
+    # longer tail; 0 disables the extra tail entirely. Note: generation is stochastic at
+    # temp=0.3, so this is a per-voice tuning lever rather than a guaranteed fix — see README.
+    _frames_after_eos_raw = os.environ.get('POCKET_TTS_FRAMES_AFTER_EOS', '').strip()
+    FRAMES_AFTER_EOS: int | None = (
+        int(_frames_after_eos_raw) if _frames_after_eos_raw.lstrip('-').isdigit() else None
+    )
+
     # Text preprocessing default
     TEXT_PREPROCESS_DEFAULT = (
         os.environ.get('POCKET_TTS_TEXT_PREPROCESS_DEFAULT', 'false').lower() == 'true'

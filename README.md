@@ -89,6 +89,10 @@ Errors use the OpenAI-shaped envelope: `{"error": {"message", "type", "code"}}` 
 
 Per-request overrides for the pipeline are also accepted: `normalize`, `segmentation` (`none`/`paragraph`/`sentence`), `skip_code_blocks`, `code_block_phrase`, `emoji_handling` (`strip`/`describe`/`keep`), and `marker_pattern` (regex of client markers to strip; empty value disables stripping).
 
+**Text normalization & pronunciation.** When `normalize` is on, the pipeline expands contractions and abbreviations, strips markdown/code blocks, and — so every voice pronounces tech terms consistently — rewrites all-caps acronyms into their spoken form before synthesis: letter-initialisms are spaced out (`IP` → "I P", `CPU` → "C P U", `HTTPS` → "H T T P S") and common ones become phrases (`LLM` → "large language model", `TTS` → "text to speech"). Matching is case-sensitive on the all-caps token, so mixed-case words like `ffmpeg` or `iPhone` are left as-is. The list lives in `app/services/normalize.py` (`ACRONYM_EXPANSIONS`) — add any term you hear mangled there.
+
+**Cut-off at sentence ends.** pocket-tts stops generating a short tail after it detects end-of-speech; the default guess (~3 frames ≈ 240 ms) is sometimes too short, so a voice can clip its final consonant/syllable (e.g. "…sharp" → "…shar"). This is stochastic and varies per voice file, which is why one reference audio may say "IP" fine while another doesn't. `POCKET_TTS_FRAMES_AFTER_EOS` lets you lengthen that tail to reduce clipping; because sampling is non-deterministic it's a tuning lever, not a guarantee — if a specific voice still clips, also check its reference WAV for trailing noise (see Voices below).
+
 ---
 
 ## Configuration (environment variables)
@@ -111,6 +115,7 @@ All optional — defaults preserve existing behavior, so nothing changes unless 
 | `POCKET_TTS_API_KEY` | — (unset) | When set, every route except `/health` and `/ready` requires `Authorization: Bearer <key>`. Leave unset for open local use. |
 | `POCKET_TTS_SEGMENT_GAP_MS` | `200` | Silence inserted between synthesized segments so long text doesn't run together (set `0` to disable). |
 | `POCKET_TTS_MAX_CACHED_VOICES` | `8` | Bound for the loaded-voice LRU cache (set `0` for unbounded). |
+| `POCKET_TTS_FRAMES_AFTER_EOS` | — (unset) | Extra decoder frames after end-of-speech (1 frame = 80 ms). Unset uses pocket-tts's built-in guess (~3 frames), which is short enough that some voices clip the final consonant/syllable. Set e.g. `6` for a longer tail; `0` disables it. Generation is stochastic, so treat this as a per-voice tuning lever rather than a guaranteed fix. |
 
 ### Model
 | Variable | Default | Description |
@@ -154,7 +159,7 @@ The app reads `HF_TOKEN`, or falls back to the file at `HF_TOKEN_FILE` (default 
 ## Voices
 
 - **Built-in:** ~27 Pocket TTS voices (`alba`, `marius`, `jean`, …). The list is derived from the installed `pocket-tts` package, so it tracks upstream automatically — see `GET /v1/voices`.
-- **Custom:** drop `.wav`/`.mp3`/`.flac` files into `data/voices/`. Reference them by filename (e.g. `"voice": "ada.wav"`) or bare stem if unique. Startup normalizes WAV loudness to a target level (disable with `POCKET_TTS_SKIP_VOICE_NORMALIZE`).
+- **Custom:** drop `.wav`/`.mp3`/`.flac` files into `data/voices/`. Reference them by filename (e.g. `"voice": "ada.wav"`) or bare stem if unique. Startup normalizes WAV loudness to a target level (disable with `POCKET_TTS_SKIP_VOICE_NORMALIZE`). The reference audio is used for zero-shot voice cloning, so its quality directly shapes the output — background noise in the source (e.g. pulled from a video) can come through as a faint "rush" or hum, and a noisy/short clip also makes end-of-speech detection less reliable. For cleanest results use a dry, well-recorded sample with no music or room tone.
 
 Shipped custom voices (short names, easy to thumb-type in a GUI / mobile client):
 
