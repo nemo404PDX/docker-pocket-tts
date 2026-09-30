@@ -512,6 +512,65 @@ def test_double_equals_is_read_as_equals():
     assert 'a equals b' in out or ('equals' in out)
 
 
+# ─────────────────────────────────────────────
+# Inline code (backticked spans): symbols must not reach the model raw
+# ─────────────────────────────────────────────
+def test_inline_code_equals_is_read_as_equals():
+    # Backticked spans freeze their content — a raw "=" reaching sentencepiece is an unknown
+    # token and the model emits noise around it (whisper heard "Essex"). The equals pass must
+    # run on inline-code content before it is frozen.
+    out = normalize_tts_text('Set `FRAMES_AFTER_EOS=6` now.')
+    assert 'equals' in out and 'six' in out
+    assert '=' not in out
+
+
+def test_inline_code_snake_identifier_resolves():
+    # The snake-case resolver runs before the inline-code freeze, so identifiers inside
+    # backticks read naturally instead of being letter-spelled as a fused blob.
+    out = normalize_tts_text('Set `FALLBACK_UNKNOWN_VOICE=true` and go.')
+    assert 'fallback unknown voice' in out
+    assert 'equals true' in out
+
+
+def test_inline_code_plus_connector_is_read_as_plus():
+    # A raw "+" reaching sentencepiece is an unknown token — read it as "plus".
+    out = normalize_tts_text('Use `token+download` mode.')
+    assert 'plus' in out and '+' not in out
+
+
+def test_inline_code_slash_between_words_is_read_as_slash():
+    # A raw "/" reaching sentencepiece is <0x2F> (unknown control token) — read it as "slash".
+    out = normalize_tts_text('The repo is `nemo404PDX/docker-pocket-tts`.')
+    assert 'slash' in out and '/' not in out
+
+
+def test_inline_code_url_stays_intact():
+    # URLs inside inline code are protected whole — no "slash" injected, digits untouched.
+    out = normalize_tts_text('See `https://example.com/path` for docs.')
+    assert 'https://example.com/path' in out
+    assert 'slash' not in out
+
+
+def test_inline_code_unix_path_stays_intact():
+    # Frozen unix paths keep their slashes (no "slash" injection).
+    out = normalize_tts_text('The file is at `/tmp/a/b.txt`.')
+    assert '/tmp/a/b.txt' in out
+    assert 'slash' not in out
+
+
+def test_inline_code_mixed_alnum_resolves():
+    # Mixed letters+digits inside inline code resolve to a spoken form instead of being
+    # frozen whole and shredded by sentencepiece ("NEMO 4DD").
+    out = normalize_tts_text('The repo is `nemo404PDX`.')
+    assert 'four hundred four' in out or '404' in out
+
+
+def test_inline_code_number_expansion():
+    # Digits inside inline code still flow through number expansion ("6" -> "six").
+    out = normalize_tts_text('Set `MAX_RETRIES_3` to 5.')
+    assert 'three' in out and 'five' in out
+
+
 def test_mixed_alnum_model_name_resolves_to_spoken_form():
     # llama3 / gpt2 style tokens resolve at protection time (words lowercase, digits intact
     # for number expansion) instead of being frozen whole and shredded by sentencepiece.

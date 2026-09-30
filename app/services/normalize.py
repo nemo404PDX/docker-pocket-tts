@@ -97,7 +97,10 @@ _UNIX_PATH_RE = re.compile(r'(?<!\w)/(?:[a-z0-9._-]+/)*[a-z0-9._-]+', re.IGNOREC
 # Bare URLs (https://example.com/path). Protected whole so the slash-connector pass never
 # injects "slash" into them and number expansion can't touch their digits. Markdown link
 # targets are already stripped by _strip_markdown_syntax; this catches bare URLs in prose.
-_URL_RE = re.compile(r'https?://[^\s<>"\')\]]+', re.IGNORECASE)
+# The backtick is excluded so a URL inside inline code stops at the closing backtick —
+# otherwise the frozen token swallows it and a stray "`" leaks into the final text after
+# restoration (the inline-code pass then can't match its span).
+_URL_RE = re.compile(r'https?://[^\s<>"\')\]`]+', re.IGNORECASE)
 _INLINE_WHITESPACE_RE = re.compile(r'[^\S\n]{2,}')
 _NEWLINE_PADDING_RE = re.compile(r'[^\S\n]*\n[^\S\n]*')
 _SENTENCE_RE = re.compile(r'[^.!?]+[.!?]+(?:["\')\]]+)?|[^.!?]+$')
@@ -565,7 +568,6 @@ def _protect_tokens(text: str) -> tuple[str, dict[str, str]]:
     # its (?<![/\w]) lookbehind rejects it, so the filename pass then protects the whole token
     # intact; if it ran after, the lookbehind would see the protection token instead of the slash.
     protect(_PRODUCT_NAME_RE, _product_name_replacement)
-    protect(_INLINE_CODE_RE, lambda m: m.group(1))
     protect(_VERSION_RE)
     # Bare URLs before unix paths: otherwise the path part would be protected separately
     # (leaving "https://" + frozen tail) and the slash-connector pass would inject "slash".
@@ -583,6 +585,26 @@ def _protect_tokens(text: str) -> tuple[str, dict[str, str]]:
     # for number expansion. Tokens with an embedded acronym (HTML5) are left unprotected
     # (skip_camel) so _expand_acronyms decomposes them instead.
     protect(_MIXED_ALNUM_RE, _resolve_mixed_alnum, skip_camel=True)
+    # Inline code runs LAST: every other pattern has already resolved or frozen its tokens,
+    # so the span freezes as one unit whose content is already in spoken form — identifiers
+    # read naturally ("FRAMES_AFTER_EOS=6" -> "frames after E O S equals 6"), mixed-alnum
+    # resolves instead of being shredded by sentencepiece ("nemo404PDX" -> "nemo four hundred
+    # four P D X"), and URLs/paths stay intact. The span's value may contain inner protection
+    # tokens; _restore_tokens unwraps them (outer-first, reverse insertion order).
+    def _inline_code_value(match: re.Match[str]) -> str:
+        content = match.group(1)
+        # Symbols inside a frozen span never see the main connector/number passes (which run
+        # on protected text), so apply them here in pipeline order — plus, equals, number
+        # expansion, slash. A raw "=", "+" or "/" reaching sentencepiece is an unknown token
+        # and the model emits noise around it (whisper heard "Essex" for "="). Operands may be
+        # protection-token boundaries; skip_filenames keeps a "+" inside an unprotectable
+        # filename ("a+b.txt") raw.
+        content = _expand_plus_connectors(content, skip_filenames=True)
+        content = _expand_equals_signs(content)
+        content = _NUMBER_PREPROCESSOR.process(content)
+        return _expand_slash_connectors(content)
+
+    protect(_INLINE_CODE_RE, _inline_code_value)
     return text, token_map
 
 
@@ -601,10 +623,10 @@ def _alpha_token(counter: int) -> str:
 def _restore_tokens(text: str, token_map: dict[str, str]) -> str:
     # Restore in REVERSE insertion order: a later (outer) pattern may have wrapped an
     # earlier (inner) protected span — e.g. `FALLBACK_UNKNOWN_VOICE` where the snake-case
-    # pass protected the identifier and the inline-code pass then wrapped it in backticks.
-    # The outer token's value contains the inner token string, so restoring outer-first
-    # re-exposes the inner one for its own replacement. (Flat, non-nested tokens restore
-    # identically in either order.)
+    # pass resolved the identifier and the inline-code pass (which runs last) then froze the
+    # whole span, embedding the inner token in its value. Restoring outer-first re-exposes
+    # the inner one for its own replacement. (Flat, non-nested tokens restore identically
+    # in either order.)
     for token, value in reversed(token_map.items()):
         text = text.replace(token, value)
     return text
@@ -870,13 +892,21 @@ def _normalize_dot_prefixed_tokens(text: str) -> str:
 
 # A plus sign used as a connector between two words ("token+download", "2 + 2"). Runs after
 # token protection/restoration so URLs and filenames are already frozen — only standalone
-# connectors remain. Without this the raw "+" reaches sentencepiece, which shreds it into
-# unknown tokens and the model emits noise around it.
+# connectors remain (a "+" inside a protected filename like my+file.txt is never touched).
+# Without this the raw "+" reaches sentencepiece, which shreds it into unknown tokens and
+# the model emits noise around it. Operands must be word chars: allowing protection-token
+# boundaries here would match "\x03+\w" INSIDE a frozen filename token ("my+file.txt").
 _PLUS_CONNECTOR_RE = re.compile(r'(\w)\s*\+\s*(?=\w)')
+# Same connector for inline-code content, where filenames are NOT yet protected (a "+" is
+# not in _FILENAME_RE's char set, so "my+file.txt" stays raw). The (?!\.\w) lookahead skips
+# a plus whose right operand continues into ".<word>" — that is part of a filename, not a
+# connector. Operands may be protection-token boundaries ("\x02PROT..\x03+1").
+_PLUS_CONNECTOR_CODE_RE = re.compile(r'([\w\x03])\s*\+\s*(?=[\w.\x02])(?!\.\w)')
 
 
-def _expand_plus_connectors(text: str) -> str:
-    return _PLUS_CONNECTOR_RE.sub(lambda m: f"{m.group(1)} plus ", text)
+def _expand_plus_connectors(text: str, skip_filenames: bool = False) -> str:
+    pattern = _PLUS_CONNECTOR_CODE_RE if skip_filenames else _PLUS_CONNECTOR_RE
+    return pattern.sub(lambda m: f"{m.group(1)} plus ", text)
 
 
 # Assignment/comparison equals between operands ("FRAMES_AFTER_EOS=6", "a=b"). A raw "="
@@ -898,7 +928,10 @@ def _expand_equals_signs(text: str) -> str:
 # are never touched. Without this the raw "/" reaches sentencepiece as <0x2F> (an unknown
 # control token) and the model emits noise around it (whisper heard "NEMO 400-4. P.D.").
 # Operands may be protection-token boundaries (\x03/\x02) because both sides of a repo-path
-# slash are usually frozen tokens ("...\x03/\x02...").
+# slash are usually frozen tokens ("...\x03/\x02..."). Digit-digit slashes in prose were
+# already read as fractions by number expansion (which runs first); inside inline code the
+# same number-expansion pass runs on the span's content before it is frozen, so "1/2" reads
+# as a fraction there too — never a raw <0x2F> token.
 _SLASH_CONNECTOR_RE = re.compile(r'([\w\x03])\s*/\s*(?=[\w\x02])')
 
 
