@@ -169,9 +169,10 @@ Shipped custom voices (short names, easy to thumb-type in a GUI / mobile client)
 | `ada.wav`   | `ada` |
 | `amy.wav`   | `amy` |
 | `eli.wav`   | `eli` |
-| `ellie.wav` | `ellie` |
 | `emi.wav`   | `emi` |
+| `lizzie.wav` | `lizzie` |
 | `max.wav`   | `max` |
+| `may.wav`   | `may` |
 | `default.wav` | `default` (also the default voice when present) |
 
 > Note: a custom file whose name matches a built-in voice is shadowed — the built-in wins for bare-name requests; use the full filename to force the local file. The shipped names above were chosen specifically so none collide with a built-in, so every one resolves by its short id.
