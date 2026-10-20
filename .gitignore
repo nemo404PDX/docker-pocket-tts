@@ -16,3 +16,4 @@ data/models/*
 data/logs/*
 !data/logs/.gitkeep
 .stt-venv/
+data/voices/nemo.wav
